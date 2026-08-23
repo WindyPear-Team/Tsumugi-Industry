@@ -4,7 +4,9 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"tsumugi-industry/internal/auth"
 	"tsumugi-industry/internal/models"
@@ -31,7 +33,7 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, frontend fs.FS) *gin.Engine {
 	router.POST("/api/auth/login", service.login)
 
 	protected := router.Group("/api")
-	protected.Use(manager.Middleware())
+	protected.Use(manager.Middleware(), service.audit)
 	protected.GET("/auth/me", service.me)
 	protected.GET("/dashboard/summary", auth.RequirePermission("dashboard.read"), service.dashboard)
 	protected.GET("/users", auth.RequirePermission("users.read"), service.users)
@@ -40,6 +42,12 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, frontend fs.FS) *gin.Engine {
 	protected.POST("/roles", auth.RequirePermission("roles.write"), service.createRole)
 	protected.GET("/permissions", auth.RequirePermission("roles.read"), service.permissions)
 	protected.GET("/settings", auth.RequirePermission("system.settings"), service.settings)
+	protected.GET("/devices", auth.RequirePermission("devices.read"), service.devices)
+	protected.POST("/devices", auth.RequirePermission("devices.write"), service.createDevice)
+	protected.PATCH("/devices/:id/status", auth.RequirePermission("devices.write"), service.updateDeviceStatus)
+	protected.GET("/alarms", auth.RequirePermission("alarms.read"), service.alarms)
+	protected.POST("/alarms/:id/ack", auth.RequirePermission("alarms.operate"), service.ackAlarm)
+	protected.GET("/audit", auth.RequirePermission("audit.read"), service.auditLogs)
 
 	serveFrontend := func(c *gin.Context) {
 		path := strings.TrimPrefix(c.Request.URL.Path, "/")
@@ -127,14 +135,16 @@ func (r *Router) me(c *gin.Context) {
 }
 
 func (r *Router) dashboard(c *gin.Context) {
-	var users, roles int64
+	var users, roles, devicesOnline, activeAlarms int64
 	r.db.Model(&models.User{}).Count(&users)
 	r.db.Model(&models.Role{}).Count(&roles)
+	r.db.Model(&models.Device{}).Where("status = ?", "online").Count(&devicesOnline)
+	r.db.Model(&models.Alarm{}).Where("status IN ?", []string{"active", "acknowledged"}).Count(&activeAlarms)
 	c.JSON(http.StatusOK, gin.H{
 		"users":          users,
 		"roles":          roles,
-		"devices_online": 0,
-		"alerts":         0,
+		"devices_online": devicesOnline,
+		"alerts":         activeAlarms,
 	})
 }
 
@@ -244,4 +254,150 @@ func (r *Router) settings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": settings})
+}
+
+func (r *Router) devices(c *gin.Context) {
+	var devices []models.Device
+	query := r.db.Order("id asc")
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		like := "%" + search + "%"
+		query = query.Where("code LIKE ? OR name LIKE ? OR location LIKE ?", like, like, like)
+	}
+	if err := query.Find(&devices).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": devices})
+}
+
+type createDeviceRequest struct {
+	Code     string `json:"code" binding:"required,max=64"`
+	Name     string `json:"name" binding:"required,max=128"`
+	Type     string `json:"type" binding:"max=64"`
+	Location string `json:"location" binding:"max=160"`
+	Status   string `json:"status" binding:"max=32"`
+	Metadata string `json:"metadata"`
+}
+
+func (r *Router) createDevice(c *gin.Context) {
+	var request createDeviceRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	status := strings.TrimSpace(request.Status)
+	if status == "" {
+		status = "offline"
+	}
+	if !validDeviceStatus(status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status must be online, offline, or maintenance"})
+		return
+	}
+	device := models.Device{Code: strings.TrimSpace(request.Code), Name: strings.TrimSpace(request.Name), Type: strings.TrimSpace(request.Type), Location: strings.TrimSpace(request.Location), Status: status, Metadata: request.Metadata}
+	if status == "online" {
+		now := time.Now()
+		device.LastSeenAt = &now
+	}
+	if err := r.db.Create(&device).Error; err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "device code already exists"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"device": device})
+}
+
+func (r *Router) updateDeviceStatus(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device id"})
+		return
+	}
+	var payload struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil || !validDeviceStatus(payload.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status must be online, offline, or maintenance"})
+		return
+	}
+	var device models.Device
+	if err := r.db.First(&device, uint(id)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+		return
+	}
+	device.Status = payload.Status
+	if payload.Status == "online" {
+		now := time.Now()
+		device.LastSeenAt = &now
+	}
+	if err := r.db.Save(&device).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"device": device})
+}
+
+func validDeviceStatus(status string) bool {
+	return status == "online" || status == "offline" || status == "maintenance"
+}
+
+func (r *Router) alarms(c *gin.Context) {
+	var alarms []models.Alarm
+	query := r.db.Preload("Device").Order("occurred_at desc")
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if err := query.Limit(100).Find(&alarms).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": alarms})
+}
+
+func (r *Router) ackAlarm(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid alarm id"})
+		return
+	}
+	var alarm models.Alarm
+	if err := r.db.First(&alarm, uint(id)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "alarm not found"})
+		return
+	}
+	now := time.Now()
+	alarm.Status = "acknowledged"
+	alarm.AcknowledgedAt = &now
+	if err := r.db.Save(&alarm).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"alarm": alarm})
+}
+
+func (r *Router) auditLogs(c *gin.Context) {
+	var logs []models.AuditLog
+	if err := r.db.Order("created_at desc").Limit(200).Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": logs})
+}
+
+func (r *Router) audit(c *gin.Context) {
+	c.Next()
+	user := auth.CurrentUser(c)
+	if user == nil || !strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		return
+	}
+	resource := strings.TrimPrefix(c.Request.URL.Path, "/api/")
+	if index := strings.IndexByte(resource, '/'); index >= 0 {
+		resource = resource[:index]
+	}
+	action := strings.ToLower(c.Request.Method)
+	if action == http.MethodGet {
+		action = "read"
+	}
+	_ = r.db.Create(&models.AuditLog{UserID: &user.ID, Username: user.Username, Action: action, Resource: resource, Method: c.Request.Method, Path: c.Request.URL.Path, StatusCode: c.Writer.Status(), IP: c.ClientIP()}).Error
 }

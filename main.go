@@ -23,6 +23,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("database startup failed: %v", err)
 	}
+	if err := system.EnsureDefaultPermissions(db); err != nil {
+		log.Fatalf("permission startup failed: %v", err)
+	}
 	secret, err := system.EnsureJWTSecret(db)
 	if err != nil {
 		log.Fatalf("auth startup failed: %v", err)

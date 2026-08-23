@@ -3,6 +3,8 @@ export type Role = { id: number; name: string; display_name: string; description
 export type Permission = { id: number; code: string; name: string; description?: string }
 export type Setting = { key: string; value: string }
 export type Summary = { users: number; roles: number; devices_online: number; alerts: number }
+export type Device = { id: number; code: string; name: string; type: string; location: string; status: "online" | "offline" | "maintenance"; last_seen_at?: string }
+export type AuditLog = { id: number; username: string; action: string; resource: string; method: string; path: string; status_code: number; ip: string; created_at: string }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem("tsumugi-token")

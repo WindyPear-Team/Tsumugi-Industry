@@ -1,5 +1,19 @@
 # React + TypeScript + Vite + shadcn/ui
 
+## Development
+
+Start the Go API on port `8080`, then run:
+
+```bash
+yarn dev
+```
+
+Vite proxies `/api` requests to `http://localhost:8080`. Override the target when needed:
+
+```bash
+VITE_API_TARGET=http://localhost:8090 yarn dev
+```
+
 This is a template for a new Vite project with React, TypeScript, and shadcn/ui.
 
 ## Adding components

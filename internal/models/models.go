@@ -37,3 +37,45 @@ type SystemSetting struct {
 	Value     string    `json:"value" gorm:"type:text;not null"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+type Device struct {
+	ID         uint       `json:"id" gorm:"primaryKey"`
+	Code       string     `json:"code" gorm:"size:64;uniqueIndex;not null"`
+	Name       string     `json:"name" gorm:"size:128;not null"`
+	Type       string     `json:"type" gorm:"size:64"`
+	Location   string     `json:"location" gorm:"size:160"`
+	Status     string     `json:"status" gorm:"size:32;index;not null;default:offline"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
+	Metadata   string     `json:"metadata" gorm:"type:text"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+type Alarm struct {
+	ID             uint       `json:"id" gorm:"primaryKey"`
+	DeviceID       *uint      `json:"device_id" gorm:"index"`
+	Device         *Device    `json:"device,omitempty"`
+	Code           string     `json:"code" gorm:"size:64;index"`
+	Level          string     `json:"level" gorm:"size:32;index;not null"`
+	Message        string     `json:"message" gorm:"size:255;not null"`
+	Status         string     `json:"status" gorm:"size:32;index;not null;default:active"`
+	OccurredAt     time.Time  `json:"occurred_at" gorm:"index"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at"`
+	ResolvedAt     *time.Time `json:"resolved_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+type AuditLog struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	UserID     *uint     `json:"user_id" gorm:"index"`
+	Username   string    `json:"username" gorm:"size:64"`
+	Action     string    `json:"action" gorm:"size:32;index"`
+	Resource   string    `json:"resource" gorm:"size:64;index"`
+	ResourceID string    `json:"resource_id" gorm:"size:64"`
+	Method     string    `json:"method" gorm:"size:16"`
+	Path       string    `json:"path" gorm:"size:255"`
+	StatusCode int       `json:"status_code"`
+	IP         string    `json:"ip" gorm:"size:64"`
+	Detail     string    `json:"detail" gorm:"type:text"`
+	CreatedAt  time.Time `json:"created_at" gorm:"index"`
+}

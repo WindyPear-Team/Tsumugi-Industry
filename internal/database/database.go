@@ -45,6 +45,9 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		&models.Role{},
 		&models.Permission{},
 		&models.SystemSetting{},
+		&models.Device{},
+		&models.Alarm{},
+		&models.AuditLog{},
 	); err != nil {
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}

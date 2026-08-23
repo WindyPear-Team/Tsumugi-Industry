@@ -29,6 +29,30 @@ var DefaultPermissions = []PermissionSeed{
 	{Code: "system.settings", Name: "管理系统设置"},
 	{Code: "devices.read", Name: "查看设备"},
 	{Code: "devices.write", Name: "管理设备"},
+	{Code: "alarms.read", Name: "查看告警"},
+	{Code: "alarms.operate", Name: "处置告警"},
+	{Code: "audit.read", Name: "查看审计日志"},
+}
+
+func EnsureDefaultPermissions(db *gorm.DB) error {
+	permissions := make([]models.Permission, 0, len(DefaultPermissions))
+	for _, seed := range DefaultPermissions {
+		permission := models.Permission{Code: seed.Code, Name: seed.Name}
+		if err := db.Where("code = ?", seed.Code).FirstOrCreate(&permission).Error; err != nil {
+			return err
+		}
+		permissions = append(permissions, permission)
+	}
+
+	var adminRole models.Role
+	if err := db.Where("name = ?", "admin").First(&adminRole).Error; err == nil {
+		if err := db.Model(&adminRole).Association("Permissions").Append(&permissions); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return nil
 }
 
 type SetupRequest struct {
