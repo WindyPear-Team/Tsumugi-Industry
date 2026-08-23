@@ -1,0 +1,14 @@
+# Go build output
+*.exe
+*.test
+*.out
+
+# Frontend dependencies and Yarn state
+web/node_modules/
+web/.yarn/install-state.gz
+web/tsumugi-industry/
+
+# Local editor and OS files
+.vscode/
+.idea/
+.DS_Store
