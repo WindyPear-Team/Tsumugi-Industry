@@ -38,12 +38,19 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, frontend fs.FS) *gin.Engine {
 	protected.GET("/dashboard/summary", auth.RequirePermission("dashboard.read"), service.dashboard)
 	protected.GET("/users", auth.RequirePermission("users.read"), service.users)
 	protected.POST("/users", auth.RequirePermission("users.write"), service.createUser)
+	protected.PUT("/users/:id", auth.RequirePermission("users.write"), service.updateUser)
+	protected.DELETE("/users/:id", auth.RequirePermission("users.write"), service.deleteUser)
 	protected.GET("/roles", auth.RequirePermission("roles.read"), service.roles)
 	protected.POST("/roles", auth.RequirePermission("roles.write"), service.createRole)
+	protected.PUT("/roles/:id", auth.RequirePermission("roles.write"), service.updateRole)
+	protected.DELETE("/roles/:id", auth.RequirePermission("roles.write"), service.deleteRole)
 	protected.GET("/permissions", auth.RequirePermission("roles.read"), service.permissions)
 	protected.GET("/settings", auth.RequirePermission("system.settings"), service.settings)
+	protected.PUT("/settings/:key", auth.RequirePermission("system.settings"), service.updateSetting)
 	protected.GET("/devices", auth.RequirePermission("devices.read"), service.devices)
 	protected.POST("/devices", auth.RequirePermission("devices.write"), service.createDevice)
+	protected.PUT("/devices/:id", auth.RequirePermission("devices.write"), service.updateDevice)
+	protected.DELETE("/devices/:id", auth.RequirePermission("devices.write"), service.deleteDevice)
 	protected.PATCH("/devices/:id/status", auth.RequirePermission("devices.write"), service.updateDeviceStatus)
 	protected.GET("/alarms", auth.RequirePermission("alarms.read"), service.alarms)
 	protected.POST("/alarms/:id/ack", auth.RequirePermission("alarms.operate"), service.ackAlarm)
@@ -150,7 +157,10 @@ func (r *Router) dashboard(c *gin.Context) {
 
 func (r *Router) users(c *gin.Context) {
 	var users []models.User
-	if err := r.db.Preload("Roles").Order("id asc").Find(&users).Error; err != nil {
+	query := applyTableQuery(r.db, c,
+		map[string]string{"id": "id", "username": "username", "display_name": "display_name", "email": "email", "is_active": "is_active"},
+		map[string]string{"filter_username": "username", "filter_display_name": "display_name", "filter_email": "email", "filter_is_active": "is_active"}, "id")
+	if err := query.Preload("Roles").Find(&users).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -160,6 +170,14 @@ func (r *Router) users(c *gin.Context) {
 type createUserRequest struct {
 	Username    string `json:"username" binding:"required,min=3,max=64"`
 	Password    string `json:"password" binding:"required,min=8"`
+	DisplayName string `json:"display_name" binding:"max=128"`
+	Email       string `json:"email" binding:"omitempty,email"`
+	RoleIDs     []uint `json:"role_ids"`
+}
+
+type updateUserRequest struct {
+	Username    string `json:"username" binding:"required,min=3,max=64"`
+	Password    string `json:"password" binding:"omitempty,min=8"`
 	DisplayName string `json:"display_name" binding:"max=128"`
 	Email       string `json:"email" binding:"omitempty,email"`
 	RoleIDs     []uint `json:"role_ids"`
@@ -196,9 +214,78 @@ func (r *Router) createUser(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"user": user})
 }
 
+func (r *Router) updateUser(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+	var request updateUserRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var user models.User
+	if err := r.db.First(&user, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	updates := map[string]any{"username": strings.TrimSpace(request.Username), "display_name": strings.TrimSpace(request.DisplayName), "email": strings.TrimSpace(request.Email)}
+	if request.Password != "" {
+		hash, hashErr := auth.HashPassword(request.Password)
+		if hashErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "hash password failed"})
+			return
+		}
+		updates["password_hash"] = hash
+	}
+	if err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&user).Updates(updates).Error; err != nil {
+			return err
+		}
+		if request.RoleIDs != nil {
+			var roles []models.Role
+			if err := tx.Find(&roles, request.RoleIDs).Error; err != nil {
+				return err
+			}
+			return tx.Model(&user).Association("Roles").Replace(&roles)
+		}
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "unable to update user"})
+		return
+	}
+	r.db.Preload("Roles").First(&user, id)
+	c.JSON(http.StatusOK, gin.H{"user": user})
+}
+
+func (r *Router) deleteUser(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+	current := auth.CurrentUser(c)
+	if current != nil && current.ID == id {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot delete current user"})
+		return
+	}
+	if result := r.db.Delete(&models.User{}, id); result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	} else if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (r *Router) roles(c *gin.Context) {
 	var roles []models.Role
-	if err := r.db.Preload("Permissions").Order("id asc").Find(&roles).Error; err != nil {
+	query := applyTableQuery(r.db, c,
+		map[string]string{"id": "id", "name": "name", "display_name": "display_name"},
+		map[string]string{"filter_name": "name", "filter_display_name": "display_name", "filter_description": "description"}, "id")
+	if err := query.Preload("Permissions").Find(&roles).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -238,6 +325,63 @@ func (r *Router) createRole(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"role": role})
 }
 
+func (r *Router) updateRole(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role id"})
+		return
+	}
+	var request createRoleRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var role models.Role
+	if err := r.db.First(&role, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "role not found"})
+		return
+	}
+	if err := r.db.Model(&role).Updates(map[string]any{"name": strings.TrimSpace(request.Name), "display_name": strings.TrimSpace(request.DisplayName), "description": strings.TrimSpace(request.Description)}).Error; err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "unable to update role"})
+		return
+	}
+	if request.PermissionIDs != nil {
+		var permissions []models.Permission
+		if err := r.db.Find(&permissions, request.PermissionIDs).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := r.db.Model(&role).Association("Permissions").Replace(&permissions); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	r.db.Preload("Permissions").First(&role, id)
+	c.JSON(http.StatusOK, gin.H{"role": role})
+}
+
+func (r *Router) deleteRole(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role id"})
+		return
+	}
+	var role models.Role
+	if err := r.db.First(&role, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "role not found"})
+		return
+	}
+	if role.Name == "admin" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot delete admin role"})
+		return
+	}
+	if err := r.db.Delete(&role).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (r *Router) permissions(c *gin.Context) {
 	var permissions []models.Permission
 	if err := r.db.Order("code asc").Find(&permissions).Error; err != nil {
@@ -249,19 +393,42 @@ func (r *Router) permissions(c *gin.Context) {
 
 func (r *Router) settings(c *gin.Context) {
 	var settings []models.SystemSetting
-	if err := r.db.Where("key NOT LIKE ?", "auth.%").Order("key asc").Find(&settings).Error; err != nil {
+	query := applyTableQuery(r.db.Where("key NOT LIKE ?", "auth.%"), c,
+		map[string]string{"key": "key", "value": "value"},
+		map[string]string{"filter_key": "key", "filter_value": "value"}, "key")
+	if err := query.Find(&settings).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": settings})
 }
 
+func (r *Router) updateSetting(c *gin.Context) {
+	key := strings.TrimSpace(c.Param("key"))
+	if key == "" || strings.HasPrefix(key, "auth.") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid setting key"})
+		return
+	}
+	var payload struct {
+		Value string `json:"value" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	setting := models.SystemSetting{Key: key, Value: payload.Value}
+	if err := r.db.Where("key = ?", key).Assign(models.SystemSetting{Value: payload.Value}).FirstOrCreate(&setting).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"setting": setting})
+}
+
 func (r *Router) devices(c *gin.Context) {
 	var devices []models.Device
-	query := r.db.Order("id asc")
-	if status := strings.TrimSpace(c.Query("status")); status != "" {
-		query = query.Where("status = ?", status)
-	}
+	query := applyTableQuery(r.db, c,
+		map[string]string{"id": "id", "code": "code", "name": "name", "type": "type", "location": "location", "status": "status"},
+		map[string]string{"filter_code": "code", "filter_name": "name", "filter_type": "type", "filter_location": "location", "filter_status": "status"}, "id")
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + search + "%"
 		query = query.Where("code LIKE ? OR name LIKE ? OR location LIKE ?", like, like, like)
@@ -338,6 +505,58 @@ func (r *Router) updateDeviceStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"device": device})
 }
 
+func (r *Router) updateDevice(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device id"})
+		return
+	}
+	var request createDeviceRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if request.Status != "" && !validDeviceStatus(request.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device status"})
+		return
+	}
+	var device models.Device
+	if err := r.db.First(&device, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+		return
+	}
+	updates := map[string]any{"code": strings.TrimSpace(request.Code), "name": strings.TrimSpace(request.Name), "type": strings.TrimSpace(request.Type), "location": strings.TrimSpace(request.Location), "metadata": request.Metadata}
+	if request.Status != "" {
+		updates["status"] = request.Status
+		if request.Status == "online" {
+			now := time.Now()
+			updates["last_seen_at"] = &now
+		}
+	}
+	if err := r.db.Model(&device).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "unable to update device"})
+		return
+	}
+	r.db.First(&device, id)
+	c.JSON(http.StatusOK, gin.H{"device": device})
+}
+
+func (r *Router) deleteDevice(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device id"})
+		return
+	}
+	if result := r.db.Delete(&models.Device{}, id); result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	} else if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func validDeviceStatus(status string) bool {
 	return status == "online" || status == "offline" || status == "maintenance"
 }
@@ -378,11 +597,19 @@ func (r *Router) ackAlarm(c *gin.Context) {
 
 func (r *Router) auditLogs(c *gin.Context) {
 	var logs []models.AuditLog
-	if err := r.db.Order("created_at desc").Limit(200).Find(&logs).Error; err != nil {
+	query := applyTableQuery(r.db, c,
+		map[string]string{"id": "id", "username": "username", "action": "action", "resource": "resource", "method": "method", "path": "path", "status_code": "status_code", "created_at": "created_at"},
+		map[string]string{"filter_username": "username", "filter_action": "action", "filter_resource": "resource", "filter_method": "method", "filter_path": "path", "filter_status_code": "status_code"}, "created_at")
+	if err := query.Limit(200).Find(&logs).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": logs})
+}
+
+func parseID(c *gin.Context) (uint, error) {
+	parsed, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	return uint(parsed), err
 }
 
 func (r *Router) audit(c *gin.Context) {
