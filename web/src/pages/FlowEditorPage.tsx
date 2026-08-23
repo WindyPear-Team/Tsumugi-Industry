@@ -288,13 +288,11 @@ export function FlowEditorPage() {
     const nodes = flowDocument.nodes.map((node) =>
       positions.has(node.id) ? { ...node, ...positions.get(node.id) } : node
     )
-    const edges = ordered
-      .slice(0, -1)
-      .map((node, index) => ({
-        id: `${node.id}-auto-${ordered[index + 1].id}`,
-        source: node.id,
-        target: ordered[index + 1].id,
-      }))
+    const edges = ordered.slice(0, -1).map((node, index) => ({
+      id: `${node.id}-auto-${ordered[index + 1].id}`,
+      source: node.id,
+      target: ordered[index + 1].id,
+    }))
     return { nodes, edges }
   }
   function removeNode() {
@@ -466,11 +464,11 @@ export function FlowEditorPage() {
                       key={edge.id}
                       className="absolute z-0 h-px border-t border-dashed border-muted-foreground/50"
                       style={{
-                        left: (source?.x ?? 0) + 80,
+                        left: (source?.x ?? 0) + 160,
                         top: (source?.y ?? 0) + 30,
                         width: Math.max(
-                          20,
-                          (target?.x ?? 0) - (source?.x ?? 0)
+                          8,
+                          (target?.x ?? 0) - (source?.x ?? 0) - 160
                         ),
                       }}
                     />
@@ -499,7 +497,7 @@ export function FlowEditorPage() {
                           openNodeDialog(node.id, "before")
                         }}
                       >
-                        <Plus />
+                        <span className="size-3 rounded-full bg-foreground ring-4 ring-background" />
                       </Button>
                     )}
                     <div className="flex items-center gap-2">
@@ -524,7 +522,7 @@ export function FlowEditorPage() {
                           openNodeDialog(node.id, "after")
                         }}
                       >
-                        <Plus />
+                        <span className="size-3 rounded-full bg-foreground ring-4 ring-background" />
                       </Button>
                     )}
                   </div>
