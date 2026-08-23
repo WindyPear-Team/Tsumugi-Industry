@@ -422,6 +422,26 @@ func (r *Router) validateFlowDocument(document flowDocument) []string {
 			issues = append(issues, "连线目标节点不存在："+edge.Target)
 		}
 	}
+	for _, node := range document.Nodes {
+		outgoing := 0
+		for _, edge := range document.Edges {
+			if edge.Source == node.ID {
+				outgoing++
+			}
+		}
+		if strings.EqualFold(node.Type, "IF") && outgoing < 2 {
+			issues = append(issues, "IF 节点必须至少有两条分支连线："+node.ID)
+		}
+		if strings.EqualFold(node.Type, "LOOP") && configNumberDefault(node.Config, "max_iterations", 0) <= 0 {
+			issues = append(issues, "LOOP 节点必须配置大于 0 的 max_iterations："+node.ID)
+		}
+		if strings.EqualFold(node.Type, "PARALLEL") && outgoing < 2 {
+			issues = append(issues, "PARALLEL 节点必须至少有两个并行分支："+node.ID)
+		}
+		if strings.EqualFold(node.Type, "SUBFLOW") && strings.TrimSpace(stringValue(node.Config, "flow_code", "")) == "" {
+			issues = append(issues, "SUBFLOW 节点必须配置 flow_code："+node.ID)
+		}
+	}
 	if startCount == 1 {
 		start := ""
 		for _, node := range document.Nodes {
