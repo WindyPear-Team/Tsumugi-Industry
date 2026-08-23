@@ -45,6 +45,7 @@ func (s *Service) runTask(task models.ScheduledTask) {
 	case "device_monitor":
 		cutoff := now.Add(-10 * time.Minute)
 		s.db.Model(&models.Device{}).Where("last_seen_at IS NOT NULL AND last_seen_at < ? AND status = ?", cutoff, "online").Updates(map[string]any{"status": "offline"})
+		s.db.Model(&models.PLC{}).Where("last_seen_at IS NOT NULL AND last_seen_at < ? AND status = ?", cutoff, "online").Updates(map[string]any{"status": "offline"})
 	case "database_backup":
 		if _, err := s.CreateBackup("scheduled"); err != nil {
 			status, message = "failed", err.Error()

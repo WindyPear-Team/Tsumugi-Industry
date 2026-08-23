@@ -40,10 +40,26 @@ type SystemSetting struct {
 
 type Device struct {
 	ID         uint       `json:"id" gorm:"primaryKey"`
+	PLCID      *uint      `json:"plc_id" gorm:"index"`
+	PLC        *PLC       `json:"plc,omitempty"`
 	Code       string     `json:"code" gorm:"size:64;uniqueIndex;not null"`
 	Name       string     `json:"name" gorm:"size:128;not null"`
 	Type       string     `json:"type" gorm:"size:64"`
 	Location   string     `json:"location" gorm:"size:160"`
+	Status     string     `json:"status" gorm:"size:32;index;not null;default:offline"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
+	Metadata   string     `json:"metadata" gorm:"type:text"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+type PLC struct {
+	ID         uint       `json:"id" gorm:"primaryKey"`
+	Code       string     `json:"code" gorm:"size:64;uniqueIndex;not null"`
+	Name       string     `json:"name" gorm:"size:128;not null"`
+	Protocol   string     `json:"protocol" gorm:"size:32;not null"`
+	Host       string     `json:"host" gorm:"size:128"`
+	Port       int        `json:"port"`
 	Status     string     `json:"status" gorm:"size:32;index;not null;default:offline"`
 	LastSeenAt *time.Time `json:"last_seen_at"`
 	Metadata   string     `json:"metadata" gorm:"type:text"`

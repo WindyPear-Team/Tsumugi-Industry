@@ -57,6 +57,10 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, maintenanceService *maintenan
 	protected.PUT("/devices/:id", auth.RequirePermission("devices.write"), service.updateDevice)
 	protected.DELETE("/devices/:id", auth.RequirePermission("devices.write"), service.deleteDevice)
 	protected.PATCH("/devices/:id/status", auth.RequirePermission("devices.write"), service.updateDeviceStatus)
+	protected.GET("/plcs", auth.RequirePermission("plcs.read"), service.plcs)
+	protected.POST("/plcs", auth.RequirePermission("plcs.write"), service.createPLC)
+	protected.PUT("/plcs/:id", auth.RequirePermission("plcs.write"), service.updatePLC)
+	protected.DELETE("/plcs/:id", auth.RequirePermission("plcs.write"), service.deletePLC)
 	protected.GET("/alarms", auth.RequirePermission("alarms.read"), service.alarms)
 	protected.POST("/alarms/:id/ack", auth.RequirePermission("alarms.operate"), service.ackAlarm)
 	protected.GET("/audit", auth.RequirePermission("audit.read"), service.auditLogs)
@@ -448,9 +452,12 @@ func (r *Router) updateSetting(c *gin.Context) {
 
 func (r *Router) devices(c *gin.Context) {
 	var devices []models.Device
-	query := applyTableQuery(r.db.Model(&models.Device{}), c,
+	query := applyTableQuery(r.db.Model(&models.Device{}).Preload("PLC"), c,
 		map[string]string{"id": "id", "code": "code", "name": "name", "type": "type", "location": "location", "status": "status"},
-		map[string]string{"filter_code": "code", "filter_name": "name", "filter_type": "type", "filter_location": "location", "filter_status": "status"}, "id")
+		map[string]string{"filter_code": "code", "filter_name": "name", "filter_type": "type", "filter_location": "location", "filter_status": "status", "filter_plc_id": "plc_id"}, "id")
+	if plcID := strings.TrimSpace(c.Query("plc_id")); plcID != "" {
+		query = query.Where("plc_id = ?", plcID)
+	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + search + "%"
 		query = query.Where("code LIKE ? OR name LIKE ? OR location LIKE ?", like, like, like)
@@ -464,6 +471,7 @@ func (r *Router) devices(c *gin.Context) {
 }
 
 type createDeviceRequest struct {
+	PLCID    *uint  `json:"plc_id"`
 	Code     string `json:"code" binding:"required,max=64"`
 	Name     string `json:"name" binding:"required,max=128"`
 	Type     string `json:"type" binding:"max=64"`
@@ -486,7 +494,7 @@ func (r *Router) createDevice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "status must be online, offline, or maintenance"})
 		return
 	}
-	device := models.Device{Code: strings.TrimSpace(request.Code), Name: strings.TrimSpace(request.Name), Type: strings.TrimSpace(request.Type), Location: strings.TrimSpace(request.Location), Status: status, Metadata: request.Metadata}
+	device := models.Device{PLCID: request.PLCID, Code: strings.TrimSpace(request.Code), Name: strings.TrimSpace(request.Name), Type: strings.TrimSpace(request.Type), Location: strings.TrimSpace(request.Location), Status: status, Metadata: request.Metadata}
 	if status == "online" {
 		now := time.Now()
 		device.LastSeenAt = &now
@@ -550,7 +558,7 @@ func (r *Router) updateDevice(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
 		return
 	}
-	updates := map[string]any{"code": strings.TrimSpace(request.Code), "name": strings.TrimSpace(request.Name), "type": strings.TrimSpace(request.Type), "location": strings.TrimSpace(request.Location), "metadata": request.Metadata}
+	updates := map[string]any{"plc_id": request.PLCID, "code": strings.TrimSpace(request.Code), "name": strings.TrimSpace(request.Name), "type": strings.TrimSpace(request.Type), "location": strings.TrimSpace(request.Location), "metadata": request.Metadata}
 	if request.Status != "" {
 		updates["status"] = request.Status
 		if request.Status == "online" {
@@ -581,6 +589,118 @@ func (r *Router) deleteDevice(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 	r.recordEvent(auth.CurrentUser(c), "delete", "device", "删除设备", c)
+}
+
+type plcRequest struct {
+	Code     string `json:"code" binding:"required,max=64"`
+	Name     string `json:"name" binding:"required,max=128"`
+	Protocol string `json:"protocol" binding:"required,max=32"`
+	Host     string `json:"host" binding:"max=128"`
+	Port     int    `json:"port"`
+	Status   string `json:"status" binding:"max=32"`
+	Metadata string `json:"metadata"`
+}
+
+func (r *Router) plcs(c *gin.Context) {
+	var plcs []models.PLC
+	query := applyTableQuery(r.db.Model(&models.PLC{}), c,
+		map[string]string{"id": "id", "code": "code", "name": "name", "protocol": "protocol", "host": "host", "port": "port", "status": "status"},
+		map[string]string{"filter_code": "code", "filter_name": "name", "filter_protocol": "protocol", "filter_host": "host", "filter_status": "status"}, "id")
+	query, page := paginate(query, c)
+	if err := query.Find(&plcs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": plcs, "page": page})
+}
+
+func (r *Router) createPLC(c *gin.Context) {
+	var request plcRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	status := request.Status
+	if status == "" {
+		status = "offline"
+	}
+	if !validPLCStatus(status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status must be online, offline, or maintenance"})
+		return
+	}
+	plc := models.PLC{Code: strings.TrimSpace(request.Code), Name: strings.TrimSpace(request.Name), Protocol: strings.TrimSpace(request.Protocol), Host: strings.TrimSpace(request.Host), Port: request.Port, Status: status, Metadata: request.Metadata}
+	if err := r.db.Create(&plc).Error; err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "PLC code already exists"})
+		return
+	}
+	r.recordEvent(auth.CurrentUser(c), "create", "plc", "创建 PLC "+plc.Name, c)
+	c.JSON(http.StatusCreated, gin.H{"plc": plc})
+}
+
+func (r *Router) updatePLC(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid PLC id"})
+		return
+	}
+	var request plcRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if request.Status != "" && !validPLCStatus(request.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid PLC status"})
+		return
+	}
+	var plc models.PLC
+	if err := r.db.First(&plc, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "PLC not found"})
+		return
+	}
+	updates := map[string]any{"code": strings.TrimSpace(request.Code), "name": strings.TrimSpace(request.Name), "protocol": strings.TrimSpace(request.Protocol), "host": strings.TrimSpace(request.Host), "port": request.Port, "metadata": request.Metadata}
+	if request.Status != "" {
+		updates["status"] = request.Status
+		if request.Status == "online" {
+			now := time.Now()
+			updates["last_seen_at"] = &now
+		}
+	}
+	if err := r.db.Model(&plc).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "unable to update PLC"})
+		return
+	}
+	r.db.First(&plc, id)
+	r.recordEvent(auth.CurrentUser(c), "update", "plc", "修改 PLC "+plc.Name, c)
+	c.JSON(http.StatusOK, gin.H{"plc": plc})
+}
+
+func (r *Router) deletePLC(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid PLC id"})
+		return
+	}
+	var count int64
+	r.db.Model(&models.Device{}).Where("plc_id = ?", id).Count(&count)
+	if count > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "PLC has devices; reassign them before deletion"})
+		return
+	}
+	var plc models.PLC
+	if err := r.db.First(&plc, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "PLC not found"})
+		return
+	}
+	if err := r.db.Delete(&plc).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	r.recordEvent(auth.CurrentUser(c), "delete", "plc", "删除 PLC "+plc.Name, c)
+	c.Status(http.StatusNoContent)
+}
+
+func validPLCStatus(status string) bool {
+	return status == "online" || status == "offline" || status == "maintenance"
 }
 
 func validDeviceStatus(status string) bool {

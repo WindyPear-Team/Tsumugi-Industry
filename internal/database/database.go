@@ -46,6 +46,7 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		&models.Permission{},
 		&models.SystemSetting{},
 		&models.Device{},
+		&models.PLC{},
 		&models.Alarm{},
 		&models.AuditLog{},
 		&models.ScheduledTask{},
