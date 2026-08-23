@@ -108,8 +108,6 @@ export function FlowEditorPage() {
   const [insertSide, setInsertSide] = useState<"before" | "after">("after")
   const [newType, setNewType] = useState("SET")
   const [newLabel, setNewLabel] = useState(nodeLabels.SET)
-  const [edgeTarget, setEdgeTarget] = useState("")
-  const [edgeCondition, setEdgeCondition] = useState("")
   const [issues, setIssues] = useState<string[]>([])
   const [error, setError] = useState("")
   const [saving, setSaving] = useState(false)
@@ -239,13 +237,17 @@ export function FlowEditorPage() {
     setInsertAnchorID(null)
     setDialogOpen(false)
   }
-  function dragNode(event: DragEvent) {
+  function dragNode(event: DragEvent, nodeID: string) {
     const canvas = canvasRef.current
-    if (!canvas || !selectedNode || !editable) return
+    if (!canvas || !editable) return
     const rect = canvas.getBoundingClientRect()
-    updateNode({
-      x: Math.max(0, event.clientX - rect.left - 80),
-      y: Math.max(0, event.clientY - rect.top - 30),
+    const x = Math.max(0, event.clientX - rect.left - 80)
+    const y = Math.max(0, event.clientY - rect.top - 30)
+    updateDocument({
+      ...document,
+      nodes: document.nodes.map((node) =>
+        node.id === nodeID ? { ...node, x, y } : node
+      ),
     })
   }
   function removeNode() {
@@ -263,23 +265,6 @@ export function FlowEditorPage() {
       ),
     })
     setSelectedNodeID("start")
-  }
-  function connect() {
-    if (!selectedNode || !edgeTarget || !editable) return
-    updateDocument({
-      ...document,
-      edges: [
-        ...document.edges,
-        {
-          id: newID("edge"),
-          source: selectedNode.id,
-          target: edgeTarget,
-          condition: edgeCondition || undefined,
-        },
-      ],
-    })
-    setEdgeTarget("")
-    setEdgeCondition("")
   }
   async function save() {
     setSaving(true)
@@ -447,11 +432,9 @@ export function FlowEditorPage() {
                 {document.nodes.map((node) => (
                   <div
                     key={node.id}
-                    draggable={
-                      editable && !["START", "END"].includes(node.type)
-                    }
+                    draggable={editable}
                     onDragStart={() => setSelectedNodeID(node.id)}
-                    onDragEnd={dragNode}
+                    onDragEnd={(event) => dragNode(event, node.id)}
                     onClick={() => setSelectedNodeID(node.id)}
                     className={`group absolute z-10 w-40 rounded-xl border bg-background p-3 shadow-sm ${selectedNodeID === node.id ? "border-foreground ring-2 ring-foreground/10" : "border-border/70"}`}
                     style={{ left: node.x, top: node.y }}
@@ -515,47 +498,6 @@ export function FlowEditorPage() {
               <Button disabled={!editable} onClick={() => openNodeDialog()}>
                 <Plus />
                 新增节点
-              </Button>
-            </div>
-            <Separator className="my-4" />
-            <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-              <div className="space-y-2">
-                <Label>后继节点</Label>
-                <Select
-                  disabled={!editable || !selectedNode}
-                  value={edgeTarget}
-                  onValueChange={setEdgeTarget}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="选择后继节点" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {document.nodes
-                      .filter((node) => node.id !== selectedNode?.id)
-                      .map((node) => (
-                        <SelectItem key={node.id} value={node.id}>
-                          {node.label} · {node.type}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>分支条件</Label>
-                <Input
-                  disabled={!editable}
-                  value={edgeCondition}
-                  onChange={(event) => setEdgeCondition(event.target.value)}
-                  placeholder="true / false / loop / exit"
-                />
-              </div>
-              <Button
-                className="self-end"
-                disabled={!editable || !edgeTarget}
-                onClick={connect}
-              >
-                <Plus />
-                连线
               </Button>
             </div>
           </CardContent>
