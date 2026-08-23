@@ -452,28 +452,35 @@ export function FlowEditorPage() {
               className="relative min-h-[520px] overflow-auto rounded-xl border border-dashed bg-muted/20 p-4"
             >
               <div className="relative h-[480px] min-w-[900px]">
-                {document.edges.map((edge) => {
-                  const source = document.nodes.find(
-                    (node) => node.id === edge.source
-                  )
-                  const target = document.nodes.find(
-                    (node) => node.id === edge.target
-                  )
-                  return (
-                    <div
-                      key={edge.id}
-                      className="absolute z-0 h-px border-t border-dashed border-muted-foreground/50"
-                      style={{
-                        left: (source?.x ?? 0) + 160,
-                        top: (source?.y ?? 0) + 30,
-                        width: Math.max(
-                          8,
-                          (target?.x ?? 0) - (source?.x ?? 0) - 160
-                        ),
-                      }}
-                    />
-                  )
-                })}
+                <svg
+                  className="pointer-events-none absolute inset-0 z-0 size-full overflow-visible"
+                  aria-hidden="true"
+                >
+                  {document.edges.map((edge) => {
+                    const source = document.nodes.find(
+                      (node) => node.id === edge.source
+                    )
+                    const target = document.nodes.find(
+                      (node) => node.id === edge.target
+                    )
+                    if (!source || !target) return null
+                    return (
+                      <line
+                        key={edge.id}
+                        x1={source.x + 160}
+                        y1={source.y + 30}
+                        x2={target.x}
+                        y2={target.y + 30}
+                        stroke="currentColor"
+                        strokeOpacity="0.55"
+                        strokeWidth="1.5"
+                        strokeDasharray="6 5"
+                        strokeLinecap="round"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    )
+                  })}
+                </svg>
                 {document.nodes.map((node) => (
                   <div
                     key={node.id}
@@ -487,11 +494,13 @@ export function FlowEditorPage() {
                     {editable && node.type !== "START" && (
                       <Button
                         type="button"
+                        draggable={false}
                         variant="outline"
                         size="icon-sm"
                         className="absolute top-1/2 -left-5 z-20 size-7 -translate-y-1/2 rounded-full bg-background opacity-70 shadow-sm transition-opacity group-hover:opacity-100"
                         title="在此节点之前添加"
                         onPointerDown={(event) => event.stopPropagation()}
+                        onDragStart={(event) => event.stopPropagation()}
                         onClick={(event) => {
                           event.stopPropagation()
                           openNodeDialog(node.id, "before")
@@ -512,11 +521,13 @@ export function FlowEditorPage() {
                     {editable && node.type !== "END" && (
                       <Button
                         type="button"
+                        draggable={false}
                         variant="outline"
                         size="icon-sm"
                         className="absolute top-1/2 -right-5 z-20 size-7 -translate-y-1/2 rounded-full bg-background opacity-70 shadow-sm transition-opacity group-hover:opacity-100"
                         title="在此节点之后添加"
                         onPointerDown={(event) => event.stopPropagation()}
+                        onDragStart={(event) => event.stopPropagation()}
                         onClick={(event) => {
                           event.stopPropagation()
                           openNodeDialog(node.id, "after")
