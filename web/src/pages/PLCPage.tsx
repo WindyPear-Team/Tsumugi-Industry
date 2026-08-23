@@ -22,6 +22,13 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 
 type Page = {
@@ -359,14 +366,20 @@ export function PLCPage() {
               </div>
               <div className="space-y-2">
                 <Label>协议</Label>
-                <Input
+                <Select
                   required
-                  placeholder="modbus-tcp / opcua"
                   value={form.protocol}
-                  onChange={(event) =>
-                    setForm({ ...form, protocol: event.target.value })
-                  }
-                />
+                  onValueChange={(protocol) => setForm({ ...form, protocol })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择 PLC 协议" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="s7comm">Siemens S7comm</SelectItem>
+                    <SelectItem value="opcua">OPC UA</SelectItem>
+                    <SelectItem value="modbus-tcp">Modbus TCP</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>主机</Label>
