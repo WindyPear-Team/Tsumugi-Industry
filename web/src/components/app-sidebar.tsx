@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom"
-import { CircleGauge, Cpu, Database, FileClock, KeyRound, Settings2, ShieldCheck, Users, Wrench } from "lucide-react"
+import { CircleGauge, ClipboardList, Cpu, Database, FileClock, KeyRound, Settings2, ShieldCheck, Users, Wrench } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,7 @@ import type { User } from "@/lib/api"
 
 const items = [
   { id: "overview", path: "/", label: "运行总览", icon: CircleGauge, group: "工作台" },
+  { id: "work-orders", path: "/work-orders", label: "生产工单", icon: ClipboardList, group: "生产执行" },
   { id: "devices", path: "/devices", label: "设备接入", icon: Database, group: "工作台" },
   { id: "plcs", path: "/plcs", label: "PLC 管理", icon: Cpu, group: "工作台" },
   { id: "audit", path: "/audit", label: "审计日志", icon: FileClock, group: "工作台" },

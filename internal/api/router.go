@@ -75,6 +75,19 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, maintenanceService *maintenan
 	protected.GET("/backups", auth.RequirePermission("system.settings"), service.backups)
 	protected.POST("/backups", auth.RequirePermission("system.settings"), service.createBackup)
 	protected.POST("/backups/:id/restore", auth.RequirePermission("system.settings"), service.restoreBackup)
+	protected.GET("/work-orders", auth.RequirePermission("production.read"), service.workOrders)
+	protected.GET("/work-orders/:id", auth.RequirePermission("production.read"), service.workOrder)
+	protected.POST("/work-orders", auth.RequirePermission("production.write"), service.createWorkOrder)
+	protected.PUT("/work-orders/:id", auth.RequirePermission("production.write"), service.updateWorkOrder)
+	protected.DELETE("/work-orders/:id", auth.RequirePermission("production.write"), service.deleteWorkOrder)
+	protected.POST("/work-orders/:id/release", auth.RequirePermission("production.operate"), service.releaseWorkOrder)
+	protected.POST("/work-orders/:id/start", auth.RequirePermission("production.operate"), service.startWorkOrder)
+	protected.POST("/work-orders/:id/pause", auth.RequirePermission("production.operate"), service.pauseWorkOrder)
+	protected.POST("/work-orders/:id/resume", auth.RequirePermission("production.operate"), service.resumeWorkOrder)
+	protected.POST("/work-orders/:id/cancel", auth.RequirePermission("production.operate"), service.cancelWorkOrder)
+	protected.POST("/work-orders/:id/complete", auth.RequirePermission("production.operate"), service.completeWorkOrder)
+	protected.POST("/work-orders/:id/steps/:stepID/start", auth.RequirePermission("production.operate"), service.startWorkOrderStep)
+	protected.POST("/work-orders/:id/steps/:stepID/complete", auth.RequirePermission("production.operate"), service.completeWorkOrderStep)
 
 	serveFrontend := func(c *gin.Context) {
 		path := strings.TrimPrefix(c.Request.URL.Path, "/")
@@ -163,16 +176,20 @@ func (r *Router) me(c *gin.Context) {
 }
 
 func (r *Router) dashboard(c *gin.Context) {
-	var users, roles, devicesOnline, activeAlarms int64
+	var users, roles, devicesOnline, activeAlarms, workOrdersRunning, workOrdersWaiting int64
 	r.db.Model(&models.User{}).Count(&users)
 	r.db.Model(&models.Role{}).Count(&roles)
 	r.db.Model(&models.Device{}).Where("status = ?", "online").Count(&devicesOnline)
 	r.db.Model(&models.Alarm{}).Where("status IN ?", []string{"active", "acknowledged"}).Count(&activeAlarms)
+	r.db.Model(&models.WorkOrder{}).Where("status = ?", workOrderRunning).Count(&workOrdersRunning)
+	r.db.Model(&models.WorkOrder{}).Where("status IN ?", []string{workOrderReleased, workOrderPaused}).Count(&workOrdersWaiting)
 	c.JSON(http.StatusOK, gin.H{
-		"users":          users,
-		"roles":          roles,
-		"devices_online": devicesOnline,
-		"alerts":         activeAlarms,
+		"users":               users,
+		"roles":               roles,
+		"devices_online":      devicesOnline,
+		"alerts":              activeAlarms,
+		"work_orders_running": workOrdersRunning,
+		"work_orders_waiting": workOrdersWaiting,
 	})
 }
 

@@ -123,3 +123,64 @@ type Backup struct {
 	CreatedBy string    `json:"created_by" gorm:"size:64"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// WorkOrder is the executable production plan. Its status is changed only by
+// workflow endpoints so operators cannot accidentally skip a process step.
+type WorkOrder struct {
+	ID              uint              `json:"id" gorm:"primaryKey"`
+	Code            string            `json:"code" gorm:"size:64;uniqueIndex;not null"`
+	ProductCode     string            `json:"product_code" gorm:"size:64;index;not null"`
+	ProductName     string            `json:"product_name" gorm:"size:128;not null"`
+	PlannedQty      int               `json:"planned_qty" gorm:"not null"`
+	CompletedQty    int               `json:"completed_qty" gorm:"not null;default:0"`
+	FailedQty       int               `json:"failed_qty" gorm:"not null;default:0"`
+	Status          string            `json:"status" gorm:"size:32;index;not null;default:draft"`
+	Priority        string            `json:"priority" gorm:"size:16;index;not null;default:normal"`
+	CurrentSequence int               `json:"current_sequence" gorm:"not null;default:0"`
+	ScheduledStart  *time.Time        `json:"scheduled_start"`
+	ScheduledEnd    *time.Time        `json:"scheduled_end"`
+	Notes           string            `json:"notes" gorm:"type:text"`
+	Version         int               `json:"version" gorm:"not null;default:1"`
+	CreatedByID     *uint             `json:"created_by_id" gorm:"index"`
+	CreatedBy       *User             `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
+	Steps           []WorkOrderStep   `json:"steps,omitempty" gorm:"foreignKey:WorkOrderID;constraint:OnDelete:CASCADE"`
+	Events          []ProductionEvent `json:"events,omitempty" gorm:"foreignKey:WorkOrderID;constraint:OnDelete:CASCADE"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
+}
+
+type WorkOrderStep struct {
+	ID          uint       `json:"id" gorm:"primaryKey"`
+	WorkOrderID uint       `json:"work_order_id" gorm:"index;not null;uniqueIndex:idx_work_order_step_sequence"`
+	Sequence    int        `json:"sequence" gorm:"not null;uniqueIndex:idx_work_order_step_sequence"`
+	Code        string     `json:"code" gorm:"size:64;not null"`
+	Name        string     `json:"name" gorm:"size:128;not null"`
+	DeviceID    *uint      `json:"device_id" gorm:"index"`
+	Device      *Device    `json:"device,omitempty"`
+	PlannedQty  int        `json:"planned_qty" gorm:"not null"`
+	PassedQty   int        `json:"passed_qty" gorm:"not null;default:0"`
+	FailedQty   int        `json:"failed_qty" gorm:"not null;default:0"`
+	Status      string     `json:"status" gorm:"size:32;index;not null;default:pending"`
+	StartedAt   *time.Time `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at"`
+	Notes       string     `json:"notes" gorm:"type:text"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type ProductionEvent struct {
+	ID              uint      `json:"id" gorm:"primaryKey"`
+	WorkOrderID     uint      `json:"work_order_id" gorm:"index;not null"`
+	WorkOrderStepID *uint     `json:"work_order_step_id" gorm:"index"`
+	DeviceID        *uint     `json:"device_id" gorm:"index"`
+	EventType       string    `json:"event_type" gorm:"size:32;index;not null"`
+	FromStatus      string    `json:"from_status" gorm:"size:32"`
+	ToStatus        string    `json:"to_status" gorm:"size:32"`
+	PassedQty       int       `json:"passed_qty"`
+	FailedQty       int       `json:"failed_qty"`
+	Reason          string    `json:"reason" gorm:"size:255"`
+	Payload         string    `json:"payload" gorm:"type:text"`
+	OperatorID      *uint     `json:"operator_id" gorm:"index"`
+	OperatorName    string    `json:"operator_name" gorm:"size:64"`
+	CreatedAt       time.Time `json:"created_at" gorm:"index"`
+}

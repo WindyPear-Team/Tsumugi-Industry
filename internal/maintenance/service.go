@@ -68,11 +68,17 @@ func (s *Service) CreateBackup(createdBy string) (models.Backup, error) {
 	var roles []models.Role
 	var permissions []models.Permission
 	var devices []models.Device
+	var workOrders []models.WorkOrder
+	var workOrderSteps []models.WorkOrderStep
+	var productionEvents []models.ProductionEvent
 	s.db.Find(&users)
 	s.db.Find(&roles)
 	s.db.Find(&permissions)
 	s.db.Find(&devices)
-	payload := map[string]any{"settings": settings, "users": users, "roles": roles, "permissions": permissions, "devices": devices}
+	s.db.Find(&workOrders)
+	s.db.Find(&workOrderSteps)
+	s.db.Find(&productionEvents)
+	payload := map[string]any{"settings": settings, "users": users, "roles": roles, "permissions": permissions, "devices": devices, "work_orders": workOrders, "work_order_steps": workOrderSteps, "production_events": productionEvents}
 	content, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return models.Backup{}, err
@@ -91,11 +97,14 @@ func (s *Service) RestoreBackup(backup models.Backup) error {
 		return err
 	}
 	var payload struct {
-		Settings    []models.SystemSetting `json:"settings"`
-		Users       []models.User          `json:"users"`
-		Roles       []models.Role          `json:"roles"`
-		Permissions []models.Permission    `json:"permissions"`
-		Devices     []models.Device        `json:"devices"`
+		Settings         []models.SystemSetting   `json:"settings"`
+		Users            []models.User            `json:"users"`
+		Roles            []models.Role            `json:"roles"`
+		Permissions      []models.Permission      `json:"permissions"`
+		Devices          []models.Device          `json:"devices"`
+		WorkOrders       []models.WorkOrder       `json:"work_orders"`
+		WorkOrderSteps   []models.WorkOrderStep   `json:"work_order_steps"`
+		ProductionEvents []models.ProductionEvent `json:"production_events"`
 	}
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return err
@@ -123,6 +132,21 @@ func (s *Service) RestoreBackup(backup models.Backup) error {
 		}
 		for _, device := range payload.Devices {
 			if err := tx.Save(&device).Error; err != nil {
+				return err
+			}
+		}
+		for _, order := range payload.WorkOrders {
+			if err := tx.Save(&order).Error; err != nil {
+				return err
+			}
+		}
+		for _, step := range payload.WorkOrderSteps {
+			if err := tx.Save(&step).Error; err != nil {
+				return err
+			}
+		}
+		for _, event := range payload.ProductionEvents {
+			if err := tx.Save(&event).Error; err != nil {
 				return err
 			}
 		}

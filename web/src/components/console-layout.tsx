@@ -8,7 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { useTheme } from "@/components/theme-provider"
 import type { User } from "@/lib/api"
 
-const titles: Record<string, [string, string]> = { "/": ["运行总览", "实时掌握生产系统运行状态"], "/devices": ["设备接入", "监控现场设备与连接状态"], "/plcs": ["PLC 管理", "管理控制器连接与设备数据来源"], "/audit": ["审计日志", "追踪关键系统操作"], "/users": ["用户管理", "维护账号与访问范围"], "/roles": ["角色权限", "配置细粒度访问策略"], "/settings": ["系统设置", "管理保存在数据库中的运行参数"] }
+const titles: Record<string, [string, string]> = { "/": ["运行总览", "实时掌握生产系统运行状态"], "/work-orders": ["生产工单", "按工序推进生产计划并记录现场结果"], "/devices": ["设备接入", "监控现场设备与连接状态"], "/plcs": ["PLC 管理", "管理控制器连接与设备数据来源"], "/audit": ["审计日志", "追踪关键系统操作"], "/users": ["用户管理", "维护账号与访问范围"], "/roles": ["角色权限", "配置细粒度访问策略"], "/settings": ["系统设置", "管理保存在数据库中的运行参数"] }
 
 export function ConsoleLayout({ user, onLogout, systemName, visibleItems }: { user: User; onLogout: () => void; systemName: string; visibleItems?: string[] }) {
   const { theme, setTheme } = useTheme(); const location = useLocation(); const [title, description] = titles[location.pathname] ?? titles["/"]
