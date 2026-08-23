@@ -108,6 +108,8 @@ export function FlowEditorPage() {
   const [insertSide, setInsertSide] = useState<"before" | "after">("after")
   const [newType, setNewType] = useState("SET")
   const [newLabel, setNewLabel] = useState(nodeLabels.SET)
+  const [draggingNodeID, setDraggingNodeID] = useState<string | null>(null)
+  const [dropTargetID, setDropTargetID] = useState<string | null>(null)
   const [issues, setIssues] = useState<string[]>([])
   const [error, setError] = useState("")
   const [saving, setSaving] = useState(false)
@@ -237,23 +239,61 @@ export function FlowEditorPage() {
     setInsertAnchorID(null)
     setDialogOpen(false)
   }
-  function dragNode(event: DragEvent, nodeID: string) {
-    const canvas = canvasRef.current
-    if (!canvas || !editable) return
-    const rect = canvas.getBoundingClientRect()
-    const x = Math.max(
-      0,
-      Math.round((event.clientX - rect.left - 80) / 20) * 20
-    )
-    const y = Math.max(0, Math.round((event.clientY - rect.top - 30) / 20) * 20)
-    const moved = document.nodes.map((node) =>
-      node.id === nodeID ? { ...node, x, y } : node
-    )
+  function dragNode(event: DragEvent) {
+    event.preventDefault()
+    if (
+      !editable ||
+      !draggingNodeID ||
+      !dropTargetID ||
+      draggingNodeID === dropTargetID
+    ) {
+      setDraggingNodeID(null)
+      setDropTargetID(null)
+      return
+    }
+    if (!isLinearFlow(document)) {
+      setError("当前流程包含分支，只能在分支编辑模式中调整连接")
+      setDraggingNodeID(null)
+      setDropTargetID(null)
+      return
+    }
+    const target = document.nodes.find((node) => node.id === dropTargetID)
+    const after = target ? event.clientX > target.x + 80 : false
     updateDocument(
-      isLinearFlow(document)
-        ? reflowLinearFlow({ ...document, nodes: moved })
-        : { ...document, nodes: moved }
+      reorderLinearFlow(document, draggingNodeID, dropTargetID, after)
     )
+    setDraggingNodeID(null)
+    setDropTargetID(null)
+  }
+
+  function reorderLinearFlow(
+    flowDocument: FlowDocument,
+    draggedID: string,
+    targetID: string,
+    after: boolean
+  ): FlowDocument {
+    const start = flowDocument.nodes.find((node) => node.type === "START")
+    const end = flowDocument.nodes.find((node) => node.type === "END")
+    if (
+      !start ||
+      !end ||
+      draggedID === start.id ||
+      draggedID === end.id ||
+      targetID === start.id ||
+      targetID === end.id
+    )
+      return flowDocument
+    const middle = flowDocument.nodes.filter(
+      (node) => !["START", "END"].includes(node.type) && node.id !== draggedID
+    )
+    const targetIndex = middle.findIndex((node) => node.id === targetID)
+    if (targetIndex < 0) return flowDocument
+    middle.splice(
+      after ? targetIndex + 1 : targetIndex,
+      0,
+      flowDocument.nodes.find((node) => node.id === draggedID)!
+    )
+    return reflowLinearFlow({ ...flowDocument, nodes: [start, ...middle, end] })
   }
 
   function isLinearFlow(flowDocument: FlowDocument) {
@@ -399,7 +439,7 @@ export function FlowEditorPage() {
               {flow && ` · v${flow.version}`}
             </CardTitle>
             <CardDescription>
-              独立流程编辑器。线性流程拖动节点会自动排序并重建连线，分支流程保留既有连接。
+              拖动节点到另一个节点的左侧或右侧即可调整顺序，线性流程会自动重建相邻连线。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -485,10 +525,19 @@ export function FlowEditorPage() {
                   <div
                     key={node.id}
                     draggable={editable}
-                    onDragStart={() => setSelectedNodeID(node.id)}
-                    onDragEnd={(event) => dragNode(event, node.id)}
+                    onDragStart={() => {
+                      setSelectedNodeID(node.id)
+                      setDraggingNodeID(node.id)
+                    }}
+                    onDragOver={(event) => {
+                      if (draggingNodeID && draggingNodeID !== node.id) {
+                        event.preventDefault()
+                        setDropTargetID(node.id)
+                      }
+                    }}
+                    onDragEnd={dragNode}
                     onClick={() => setSelectedNodeID(node.id)}
-                    className={`group absolute z-10 w-40 rounded-xl border bg-background p-3 shadow-sm ${selectedNodeID === node.id ? "border-foreground ring-2 ring-foreground/10" : "border-border/70"}`}
+                    className={`group absolute z-10 w-40 rounded-xl border bg-background p-3 shadow-sm ${dropTargetID === node.id ? "border-primary ring-2 ring-primary/30" : selectedNodeID === node.id ? "border-foreground ring-2 ring-foreground/10" : "border-border/70"}`}
                     style={{ left: node.x, top: node.y }}
                   >
                     {editable && node.type !== "START" && (
