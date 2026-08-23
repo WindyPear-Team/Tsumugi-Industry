@@ -525,8 +525,9 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 		r.db.Model(&run).Updates(map[string]any{"current_node_id": node.ID})
 		attempt := 1
 		var nodeErr error
+		jumpTarget := ""
 		for {
-			nodeErr = r.executeFlowNode(node)
+			nodeErr = r.executeFlowNode(runID, node)
 			if nodeErr == nil || errors.Is(nodeErr, errFlowConditionFalse) {
 				break
 			}
@@ -552,6 +553,15 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 					}
 				}
 				nodeErr = nil
+			}
+			if errors.As(nodeErr, &timeoutErr) && strings.EqualFold(stringValue(node.Config, "timeout_action", "FAIL"), "JUMP") {
+				jumpTarget = strings.TrimSpace(stringValue(node.Config, "timeout_target_node", ""))
+				if jumpTarget != "" {
+					nodeErr = nil
+				}
+			}
+			if errors.As(nodeErr, &timeoutErr) && strings.EqualFold(stringValue(node.Config, "timeout_action", "FAIL"), "ALARM") {
+				_ = r.db.Create(&models.Alarm{Code: "FLOW_TIMEOUT", Level: "warning", Message: timeoutErr.Error(), Status: "active", OccurredAt: time.Now()})
 			}
 			break
 		}
@@ -584,6 +594,10 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 			r.finishFlow(runID, flowCompleted, "")
 			return
 		}
+		if jumpTarget != "" {
+			current = jumpTarget
+			continue
+		}
 		edges := next[node.ID]
 		if len(edges) == 0 {
 			r.finishFlow(runID, flowFailed, "节点没有后继连线："+node.ID)
@@ -598,11 +612,15 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 	}
 }
 
-func (r *Router) executeFlowNode(node flowNode) error {
+func (r *Router) executeFlowNode(runID uint, node flowNode) error {
+	_ = runID
 	config := node.Config
 	switch strings.ToUpper(node.Type) {
-	case "START", "END", "ALARM":
+	case "START", "END":
 		return nil
+	case "ALARM":
+		message := stringValue(config, "message", "流程报警")
+		return r.db.Create(&models.Alarm{Code: "FLOW_ALARM", Level: stringValue(config, "level", "warning"), Message: message, Status: "active", OccurredAt: time.Now()}).Error
 	case "GET", "IF":
 		variableName, _ := config["variable"].(string)
 		if strings.TrimSpace(variableName) == "" {
@@ -653,6 +671,37 @@ func (r *Router) executeFlowNode(node flowNode) error {
 			return errors.New("SET 节点未配置语义变量")
 		}
 		return r.writeSemanticVariable(variableName, config["value"])
+	case "SUBFLOW":
+		code := strings.TrimSpace(stringValue(config, "flow_code", ""))
+		if code == "" {
+			return errors.New("SUBFLOW 未配置 flow_code")
+		}
+		var definition models.FlowDefinition
+		if err := r.db.Where("code = ? AND status = ?", code, flowPublished).Order("version DESC").First(&definition).Error; err != nil {
+			return fmt.Errorf("子流程 %s 不存在或未发布", code)
+		}
+		now := time.Now()
+		subrun := models.FlowRun{FlowDefinitionID: definition.ID, FlowVersion: definition.Version, Status: flowCreated, StartedAt: &now}
+		if err := r.db.Create(&subrun).Error; err != nil {
+			return err
+		}
+		go r.executeFlow(subrun.ID, definition)
+		seconds := configNumberDefault(config, "timeout_seconds", 60)
+		deadline := time.Now().Add(time.Duration(seconds * float64(time.Second)))
+		for time.Now().Before(deadline) {
+			var current models.FlowRun
+			if err := r.db.First(&current, subrun.ID).Error; err != nil {
+				return err
+			}
+			switch current.Status {
+			case flowCompleted:
+				return nil
+			case flowFailed, flowCancelled, flowTimeout:
+				return fmt.Errorf("子流程 %s 执行失败：%s", code, current.ErrorMessage)
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		return &flowTimeoutError{message: fmt.Sprintf("子流程 %s 超时", code)}
 	case "MANUAL_CONFIRM":
 		return errFlowManualConfirm
 	default:
