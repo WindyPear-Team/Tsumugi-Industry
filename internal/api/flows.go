@@ -508,6 +508,7 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 		next[edge.Source] = append(next[edge.Source], edge)
 	}
 	current := start
+	loopCounts := map[string]int{}
 	deadline := time.Time{}
 	if definition.TimeoutSeconds > 0 {
 		deadline = time.Now().Add(time.Duration(definition.TimeoutSeconds) * time.Second)
@@ -622,6 +623,21 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 		if len(edges) == 0 {
 			r.finishFlow(runID, flowFailed, "节点没有后继连线："+node.ID)
 			return
+		}
+		if strings.EqualFold(node.Type, "LOOP") {
+			maxIterations := int(configNumberDefault(node.Config, "max_iterations", 0))
+			if maxIterations <= 0 {
+				r.finishFlow(runID, flowFailed, "LOOP 节点未配置有效的 max_iterations："+node.ID)
+				return
+			}
+			count := loopCounts[node.ID]
+			loopCounts[node.ID] = count + 1
+			if count < maxIterations {
+				current = edgeTargetByCondition(edges, "loop", edges[0].Target)
+			} else {
+				current = edgeTargetByCondition(edges, "exit", edges[len(edges)-1].Target)
+			}
+			continue
 		}
 		current = edges[0].Target
 		if strings.EqualFold(node.Type, "IF") {
@@ -843,6 +859,15 @@ func stringValue(config map[string]any, key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func edgeTargetByCondition(edges []flowEdge, condition, fallback string) string {
+	for _, edge := range edges {
+		if strings.EqualFold(strings.TrimSpace(edge.Condition), condition) {
+			return edge.Target
+		}
+	}
+	return fallback
 }
 
 func configNumber(config map[string]any, key string) (float64, bool) {
