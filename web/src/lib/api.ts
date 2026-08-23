@@ -13,7 +13,7 @@ export type FlowNode = { id: string; type: string; label: string; x: number; y: 
 export type FlowEdge = { id: string; source: string; target: string; condition?: string }
 export type FlowDocument = { nodes: FlowNode[]; edges: FlowEdge[] }
 export type FlowDefinition = { id: number; code: string; name: string; description: string; version: number; status: "draft" | "published"; definition: string; timeout_seconds: number; created_at: string; updated_at: string }
-export type FlowRun = { id: number; flow_definition_id: number; flow_version: number; status: "created" | "running" | "paused" | "completed" | "failed" | "cancelled" | "timeout" | "manual_confirm"; current_node_id: string; started_at?: string; ended_at?: string; error_message?: string; node_runs?: { id: number; node_id: string; node_type: string; status: string; started_at?: string; ended_at?: string; error_message?: string }[] }
+export type FlowRun = { id: number; flow_definition_id: number; flow_definition?: FlowDefinition; flow_version: number; status: "created" | "running" | "paused" | "completed" | "failed" | "cancelled" | "timeout" | "manual_confirm"; current_node_id: string; started_at?: string; ended_at?: string; error_message?: string; node_runs?: { id: number; node_id: string; node_type: string; status: string; started_at?: string; ended_at?: string; error_message?: string }[] }
 export type AuditLog = { id: number; username: string; action: string; resource: string; detail: string; method?: string; path?: string; status_code?: number; ip?: string; created_at: string }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {

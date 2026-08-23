@@ -170,7 +170,7 @@ func Initialize(db *gorm.DB, req SetupRequest) error {
 			"system.timezone":    timezone,
 			"brand.subtitle":     "工业控制中心",
 			"brand.logo":         "",
-			"navigation.items":   `["overview","work-orders","flows","variables","plcs","devices","audit","users","roles","settings"]`,
+			"navigation.items":   `["overview","work-orders","flows","variables","flow-runs","plcs","devices","audit","users","roles","settings"]`,
 		}
 		for key, value := range settings {
 			setting := models.SystemSetting{Key: key}
