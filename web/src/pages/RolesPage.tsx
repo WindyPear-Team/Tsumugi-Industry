@@ -1,0 +1,7 @@
+import { useEffect, useState } from "react"
+import { Plus, ShieldCheck } from "lucide-react"
+import { api, type Role } from "@/lib/api"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+
+export function RolesPage() { const [roles, setRoles] = useState<Role[]>([]); useEffect(() => { api<{ items: Role[] }>("/api/roles").then((r) => setRoles(r.items)).catch(() => undefined) }, []); return <Card className="border-border/70 shadow-none"><CardHeader><div className="flex items-center justify-between"><div><CardTitle>角色与权限</CardTitle><CardDescription>细粒度权限策略集合</CardDescription></div><Button><Plus />新建角色</Button></div></CardHeader><CardContent className="space-y-3">{roles.map((role) => <div className="rounded-xl border border-border/60 p-4" key={role.id}><div className="flex items-center justify-between"><div className="flex items-center gap-3"><div className="rounded-lg bg-muted p-2"><ShieldCheck className="size-4" /></div><div><p className="font-medium">{role.display_name}</p><p className="text-xs text-muted-foreground">{role.name}</p></div></div><span className="text-sm font-semibold">{role.permissions?.length ?? 0} 项权限</span></div><div className="mt-3 flex flex-wrap gap-1.5">{role.permissions?.map((permission) => <span className="rounded-md bg-muted px-2 py-1 font-mono text-[11px]" key={permission.code}>{permission.code}</span>)}</div></div>)}</CardContent></Card> }
