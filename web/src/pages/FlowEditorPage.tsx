@@ -206,10 +206,8 @@ function DropSlot({
     <div
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`my-2 h-5 rounded-full border border-dashed transition-all ${active ? "h-10 border-primary bg-primary/15" : "border-transparent"}`}
-    >
-      <div className="mx-auto size-3 translate-y-1 rounded-full bg-muted-foreground/40" />
-    </div>
+      className={`-my-px h-1 rounded-sm border border-dashed transition-all ${active ? "my-1 h-4 border-primary bg-primary/15" : "border-transparent"}`}
+    />
   )
 }
 
@@ -237,7 +235,6 @@ function Block({
       onClick={onSelect}
       className={`relative mx-auto w-full max-w-md rounded-2xl border border-l-8 bg-background p-4 shadow-sm transition-shadow ${nodeColors[node.type] ?? "border-l-slate-500"} ${selected ? "ring-2 ring-foreground/20" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
     >
-      <span className="absolute -top-2 left-1/2 size-4 -translate-x-1/2 rounded-full border-2 border-background bg-foreground" />
       <div className="flex items-center gap-3">
         <GripVertical className="size-4 text-muted-foreground" />
         <div>
@@ -248,7 +245,6 @@ function Block({
           {node.type}
         </Badge>
       </div>
-      <span className="absolute -bottom-2 left-1/2 size-4 -translate-x-1/2 rounded-full border-2 border-background bg-foreground" />
     </div>
   )
 }
@@ -609,7 +605,7 @@ export function FlowEditorPage() {
                     onClick={openNodeDialog}
                   >
                     <Plus />
-                    新增积木
+                    新增流程
                   </Button>
                 </div>
               </div>
@@ -790,9 +786,9 @@ export function FlowEditorPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>新增流程积木</DialogTitle>
+            <DialogTitle>新增流程</DialogTitle>
             <DialogDescription>
-              选择节点类型。创建后会吸附到流程末端，再拖到任意吸附槽调整顺序。
+              选择流程节点类型。创建后会吸附到流程末端，再拖到任意吸附槽调整顺序。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -831,7 +827,7 @@ export function FlowEditorPage() {
             </Button>
             <Button onClick={addNode}>
               <Plus />
-              创建积木
+              创建流程
             </Button>
           </DialogFooter>
         </DialogContent>
