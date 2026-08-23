@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type DragEvent } from "react"
+import { useEffect, useState, type DragEvent } from "react"
 import {
   ArrowLeft,
   Check,
   GripVertical,
+  Loader2,
   Plus,
   Save,
   Send,
@@ -16,6 +17,7 @@ import {
   type FlowNode,
   type PLCVariable,
 } from "@/lib/api"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -69,10 +71,24 @@ const nodeLabels: Record<string, string> = {
   PARALLEL: "并行",
   SUBFLOW: "子流程",
 }
+const nodeColors: Record<string, string> = {
+  START: "border-l-emerald-500",
+  END: "border-l-slate-500",
+  SET: "border-l-blue-500",
+  GET: "border-l-cyan-500",
+  WAIT: "border-l-amber-500",
+  IF: "border-l-violet-500",
+  DELAY: "border-l-orange-500",
+  MANUAL_CONFIRM: "border-l-pink-500",
+  ALARM: "border-l-red-500",
+  LOOP: "border-l-indigo-500",
+  PARALLEL: "border-l-teal-500",
+  SUBFLOW: "border-l-fuchsia-500",
+}
 const emptyDocument: FlowDocument = {
   nodes: [
-    { id: "start", type: "START", label: "开始", x: 40, y: 80, config: {} },
-    { id: "end", type: "END", label: "结束", x: 540, y: 80, config: {} },
+    { id: "start", type: "START", label: "开始", x: 80, y: 40, config: {} },
+    { id: "end", type: "END", label: "结束", x: 80, y: 160, config: {} },
   ],
   edges: [{ id: "start-end", source: "start", target: "end" }],
 }
@@ -87,6 +103,154 @@ function clone<T>(value: T): T {
 }
 function newID(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
+function configFor(type: string): Record<string, unknown> {
+  if (type === "LOOP") return { max_iterations: 3 }
+  if (type === "DELAY") return { seconds: 5 }
+  if (["SET", "GET", "WAIT", "IF"].includes(type))
+    return {
+      variable: "",
+      operator: "==",
+      expected: true,
+      timeout_seconds: 10,
+      timeout_action: "FAIL",
+      max_retries: 0,
+    }
+  return {}
+}
+
+function chainDocument(nodes: FlowNode[]): FlowDocument {
+  const start = nodes.find((node) => node.type === "START") ?? {
+    id: "start",
+    type: "START",
+    label: "开始",
+    x: 80,
+    y: 40,
+    config: {},
+  }
+  const end = nodes.find((node) => node.type === "END") ?? {
+    id: "end",
+    type: "END",
+    label: "结束",
+    x: 80,
+    y: 160,
+    config: {},
+  }
+  const middle = nodes.filter((node) => !["START", "END"].includes(node.type))
+  const ordered = [start, ...middle, end].map((node, index) => ({
+    ...node,
+    x: 80,
+    y: 40 + index * 128,
+  }))
+  return {
+    nodes: ordered,
+    edges: ordered.slice(0, -1).map((node, index) => ({
+      id: `${node.id}-magnet-${ordered[index + 1].id}`,
+      source: node.id,
+      target: ordered[index + 1].id,
+    })),
+  }
+}
+
+function isMagneticDocument(flowDocument: FlowDocument) {
+  const start = flowDocument.nodes.find((node) => node.type === "START")
+  const end = flowDocument.nodes.find((node) => node.type === "END")
+  if (!start || !end || flowDocument.nodes.length < 2) return false
+  if (flowDocument.edges.length !== flowDocument.nodes.length - 1) return false
+
+  const outgoing = new Map<string, string>()
+  const incoming = new Set<string>()
+  for (const edge of flowDocument.edges) {
+    if (outgoing.has(edge.source) || incoming.has(edge.target)) return false
+    outgoing.set(edge.source, edge.target)
+    incoming.add(edge.target)
+  }
+
+  const visited = new Set<string>()
+  let current: string | undefined = start.id
+  while (current && !visited.has(current)) {
+    visited.add(current)
+    current = outgoing.get(current)
+  }
+  return visited.size === flowDocument.nodes.length && visited.has(end.id)
+}
+
+function linearNodes(flowDocument: FlowDocument) {
+  const outgoing = new Map(
+    flowDocument.edges.map((edge) => [edge.source, edge.target])
+  )
+  const byID = new Map(flowDocument.nodes.map((node) => [node.id, node]))
+  const ordered: FlowNode[] = []
+  const visited = new Set<string>()
+  let current = flowDocument.nodes.find((node) => node.type === "START")?.id
+  while (current && !visited.has(current)) {
+    const node = byID.get(current)
+    if (!node) break
+    ordered.push(node)
+    visited.add(current)
+    current = outgoing.get(current)
+  }
+  return ordered
+}
+
+function DropSlot({
+  active,
+  onDragOver,
+  onDrop,
+}: {
+  active: boolean
+  onDragOver: (event: DragEvent) => void
+  onDrop: (event: DragEvent) => void
+}) {
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={`my-2 h-5 rounded-full border border-dashed transition-all ${active ? "h-10 border-primary bg-primary/15" : "border-transparent"}`}
+    >
+      <div className="mx-auto size-3 translate-y-1 rounded-full bg-muted-foreground/40" />
+    </div>
+  )
+}
+
+function Block({
+  node,
+  selected,
+  draggable,
+  onSelect,
+  onDragStart,
+  onDragEnd,
+}: {
+  node?: FlowNode
+  selected: boolean
+  draggable: boolean
+  onSelect: () => void
+  onDragStart?: () => void
+  onDragEnd?: () => void
+}) {
+  if (!node) return null
+  return (
+    <div
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onClick={onSelect}
+      className={`relative mx-auto w-full max-w-md rounded-2xl border border-l-8 bg-background p-4 shadow-sm transition-shadow ${nodeColors[node.type] ?? "border-l-slate-500"} ${selected ? "ring-2 ring-foreground/20" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
+    >
+      <span className="absolute -top-2 left-1/2 size-4 -translate-x-1/2 rounded-full border-2 border-background bg-foreground" />
+      <div className="flex items-center gap-3">
+        <GripVertical className="size-4 text-muted-foreground" />
+        <div>
+          <p className="font-semibold">{nodeLabels[node.type] ?? node.type}</p>
+          <p className="text-sm text-muted-foreground">{node.label}</p>
+        </div>
+        <Badge className="ml-auto" variant="outline">
+          {node.type}
+        </Badge>
+      </div>
+      <span className="absolute -bottom-2 left-1/2 size-4 -translate-x-1/2 rounded-full border-2 border-background bg-foreground" />
+    </div>
+  )
 }
 
 export function FlowEditorPage() {
@@ -104,18 +268,18 @@ export function FlowEditorPage() {
     timeout_seconds: "0",
   })
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [insertAnchorID, setInsertAnchorID] = useState<string | null>(null)
-  const [insertSide, setInsertSide] = useState<"before" | "after">("after")
   const [newType, setNewType] = useState("SET")
   const [newLabel, setNewLabel] = useState(nodeLabels.SET)
-  const [draggingNodeID, setDraggingNodeID] = useState<string | null>(null)
-  const [dropTargetID, setDropTargetID] = useState<string | null>(null)
+  const [draggingID, setDraggingID] = useState<string | null>(null)
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
   const [issues, setIssues] = useState<string[]>([])
   const [error, setError] = useState("")
   const [saving, setSaving] = useState(false)
-  const canvasRef = useRef<HTMLDivElement>(null)
+  const [loading, setLoading] = useState(!isNew)
   const editable = !flow || flow.status === "draft"
   const selectedNode = document.nodes.find((node) => node.id === selectedNodeID)
+  const magnetic = isMagneticDocument(document)
+  const blocks = magnetic ? linearNodes(document) : document.nodes
   useEffect(() => {
     api<{ items: PLCVariable[] }>("/api/variables?page_size=100")
       .then((result) => setVariables(result.items))
@@ -137,18 +301,16 @@ export function FlowEditorPage() {
       .catch((err) =>
         setError(err instanceof Error ? err.message : "加载流程失败")
       )
+      .finally(() => setLoading(false))
   }, [id, isNew])
-  function updateDocument(next: FlowDocument) {
-    setDocument(next)
-  }
   function updateNode(
     patch: Partial<FlowNode>,
     config?: Record<string, unknown>
   ) {
     if (!selectedNode || !editable) return
-    updateDocument({
-      ...document,
-      nodes: document.nodes.map((node) =>
+    setDocument((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) =>
         node.id === selectedNode.id
           ? {
               ...node,
@@ -157,183 +319,32 @@ export function FlowEditorPage() {
             }
           : node
       ),
-    })
+    }))
   }
-  function openNodeDialog(
-    anchorID: string | null = null,
-    side: "before" | "after" = "after"
-  ) {
-    setInsertAnchorID(anchorID)
-    setInsertSide(side)
+  function openNodeDialog() {
     setNewType("SET")
     setNewLabel(nodeLabels.SET)
     setDialogOpen(true)
   }
   function addNode() {
-    const end = document.nodes.find((node) => node.type === "END")
-    const anchor = insertAnchorID
-      ? document.nodes.find((node) => node.id === insertAnchorID)
-      : undefined
-    const previous =
-      anchor ?? document.nodes.filter((node) => node.type !== "END").at(-1)
-    const config =
-      newType === "LOOP"
-        ? { max_iterations: 3 }
-        : newType === "DELAY"
-          ? { seconds: 5 }
-          : ["SET", "GET", "WAIT", "IF"].includes(newType)
-            ? {
-                variable: "",
-                operator: "==",
-                expected: true,
-                timeout_seconds: 10,
-                timeout_action: "FAIL",
-                max_retries: 0,
-              }
-            : {}
+    if (!isMagneticDocument(document)) {
+      setError("当前流程包含分支或无效连线，磁吸积木仅支持线性流程。")
+      return
+    }
     const node: FlowNode = {
       id: newID(newType.toLowerCase()),
       type: newType,
       label: newLabel || nodeLabels[newType],
-      x: (previous?.x ?? 40) + 250,
-      y: previous?.y ?? 80,
-      config,
+      x: 80,
+      y: 0,
+      config: configFor(newType),
     }
-    let edges = [...document.edges]
-    if (anchor && insertSide === "before") {
-      const incoming = edges.filter((edge) => edge.target === anchor.id)
-      edges = edges.map((edge) =>
-        edge.target === anchor.id ? { ...edge, target: node.id } : edge
-      )
-      if (incoming.length === 0)
-        edges.push({ id: newID("edge"), source: node.id, target: anchor.id })
-      else edges.push({ id: newID("edge"), source: node.id, target: anchor.id })
-      node.x = anchor.x - 250
-    } else if (anchor) {
-      const outgoing = edges.filter((edge) => edge.source === anchor.id)
-      edges = edges.map((edge) =>
-        edge.source === anchor.id ? { ...edge, source: node.id } : edge
-      )
-      edges.push({ id: newID("edge"), source: anchor.id, target: node.id })
-      if (outgoing.length === 0 && end && anchor.id !== end.id)
-        edges.push({ id: newID("edge"), source: node.id, target: end.id })
-      node.x = anchor.x + 250
-    } else if (previous && end) {
-      edges = edges.filter(
-        (edge) => !(edge.source === previous.id && edge.target === end.id)
-      )
-      edges.push(
-        { id: newID("edge"), source: previous.id, target: node.id },
-        { id: newID("edge"), source: node.id, target: end.id }
-      )
-    }
-    updateDocument({
-      nodes: [
-        ...document.nodes.filter((item) => item.type !== "END"),
-        node,
-        ...(end ? [end] : []),
-      ],
-      edges,
-    })
+    const middle = blocks.filter(
+      (item) => !["START", "END"].includes(item.type)
+    )
+    setDocument(chainDocument([...middle, node]))
     setSelectedNodeID(node.id)
-    setInsertAnchorID(null)
     setDialogOpen(false)
-  }
-  function dragNode(event: DragEvent) {
-    event.preventDefault()
-    if (
-      !editable ||
-      !draggingNodeID ||
-      !dropTargetID ||
-      draggingNodeID === dropTargetID
-    ) {
-      setDraggingNodeID(null)
-      setDropTargetID(null)
-      return
-    }
-    if (!isLinearFlow(document)) {
-      setError("当前流程包含分支，只能在分支编辑模式中调整连接")
-      setDraggingNodeID(null)
-      setDropTargetID(null)
-      return
-    }
-    const target = document.nodes.find((node) => node.id === dropTargetID)
-    const after = target ? event.clientX > target.x + 80 : false
-    updateDocument(
-      reorderLinearFlow(document, draggingNodeID, dropTargetID, after)
-    )
-    setDraggingNodeID(null)
-    setDropTargetID(null)
-  }
-
-  function reorderLinearFlow(
-    flowDocument: FlowDocument,
-    draggedID: string,
-    targetID: string,
-    after: boolean
-  ): FlowDocument {
-    const start = flowDocument.nodes.find((node) => node.type === "START")
-    const end = flowDocument.nodes.find((node) => node.type === "END")
-    if (
-      !start ||
-      !end ||
-      draggedID === start.id ||
-      draggedID === end.id ||
-      targetID === start.id ||
-      targetID === end.id
-    )
-      return flowDocument
-    const middle = flowDocument.nodes.filter(
-      (node) => !["START", "END"].includes(node.type) && node.id !== draggedID
-    )
-    const targetIndex = middle.findIndex((node) => node.id === targetID)
-    if (targetIndex < 0) return flowDocument
-    middle.splice(
-      after ? targetIndex + 1 : targetIndex,
-      0,
-      flowDocument.nodes.find((node) => node.id === draggedID)!
-    )
-    return reflowLinearFlow({ ...flowDocument, nodes: [start, ...middle, end] })
-  }
-
-  function isLinearFlow(flowDocument: FlowDocument) {
-    if (
-      flowDocument.nodes.some((node) =>
-        ["IF", "PARALLEL", "LOOP"].includes(node.type)
-      )
-    )
-      return false
-    const incoming = new Map<string, number>()
-    const outgoing = new Map<string, number>()
-    for (const edge of flowDocument.edges) {
-      incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
-      outgoing.set(edge.source, (outgoing.get(edge.source) ?? 0) + 1)
-    }
-    return [...incoming.values(), ...outgoing.values()].every(
-      (count) => count <= 1
-    )
-  }
-
-  function reflowLinearFlow(flowDocument: FlowDocument): FlowDocument {
-    const start = flowDocument.nodes.find((node) => node.type === "START")
-    const end = flowDocument.nodes.find((node) => node.type === "END")
-    if (!start || !end) return flowDocument
-    const middle = flowDocument.nodes
-      .filter((node) => !["START", "END"].includes(node.type))
-      .sort((a, b) => a.x - b.x || a.y - b.y)
-    const ordered = [start, ...middle, end]
-    const positions = new Map(
-      ordered.map((node, index) => [node.id, { x: 40 + index * 220, y: 180 }])
-    )
-    const nodes = flowDocument.nodes.map((node) =>
-      positions.has(node.id) ? { ...node, ...positions.get(node.id) } : node
-    )
-    const edges = ordered.slice(0, -1).map((node, index) => ({
-      id: `${node.id}-auto-${ordered[index + 1].id}`,
-      source: node.id,
-      target: ordered[index + 1].id,
-    }))
-    return { nodes, edges }
   }
   function removeNode() {
     if (
@@ -342,14 +353,42 @@ export function FlowEditorPage() {
       ["START", "END"].includes(selectedNode.type)
     )
       return
-    updateDocument({
-      nodes: document.nodes.filter((node) => node.id !== selectedNode.id),
-      edges: document.edges.filter(
-        (edge) =>
-          edge.source !== selectedNode.id && edge.target !== selectedNode.id
-      ),
-    })
+    if (!isMagneticDocument(document)) {
+      setError("当前流程包含分支或无效连线，磁吸排序暂不可用。")
+      return
+    }
+    setDocument(
+      chainDocument(blocks.filter((node) => node.id !== selectedNode.id))
+    )
     setSelectedNodeID("start")
+  }
+  function moveNode(fromID: string, targetIndex: number) {
+    if (!editable || !isMagneticDocument(document)) {
+      setError("当前流程包含分支或无效连线，磁吸排序暂不可用。")
+      setDraggingID(null)
+      setDropIndex(null)
+      return
+    }
+    const middle = blocks.filter(
+      (node) => !["START", "END"].includes(node.type)
+    )
+    const from = middle.findIndex((node) => node.id === fromID)
+    if (from < 0) return
+    const [node] = middle.splice(from, 1)
+    middle.splice(Math.max(0, Math.min(targetIndex, middle.length)), 0, node)
+    setDocument(chainDocument(middle))
+    setSelectedNodeID(node.id)
+    setDraggingID(null)
+    setDropIndex(null)
+  }
+  function onDrop(event: DragEvent, targetIndex: number) {
+    event.preventDefault()
+    if (draggingID) moveNode(draggingID, targetIndex)
+  }
+  function onDragOver(event: DragEvent, targetIndex: number) {
+    if (!editable || !draggingID) return
+    event.preventDefault()
+    setDropIndex(targetIndex)
   }
   async function save() {
     setSaving(true)
@@ -401,6 +440,12 @@ export function FlowEditorPage() {
       setError(err instanceof Error ? err.message : "发布流程失败")
     }
   }
+  if (loading)
+    return (
+      <div className="grid min-h-96 place-items-center">
+        <Loader2 className="animate-spin" />
+      </div>
+    )
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -439,7 +484,7 @@ export function FlowEditorPage() {
               {flow && ` · v${flow.version}`}
             </CardTitle>
             <CardDescription>
-              拖动节点到另一个节点的左侧或右侧即可调整顺序，线性流程会自动重建相邻连线。
+              磁吸积木流程编辑器：拖动积木到两个积木之间的吸附槽即可调整执行顺序，连线会自动重建。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -487,106 +532,86 @@ export function FlowEditorPage() {
                 />
               </div>
             </div>
-            <div
-              ref={canvasRef}
-              className="relative min-h-[520px] overflow-auto rounded-xl border border-dashed bg-muted/20 p-4"
-            >
-              <div className="relative h-[480px] min-w-[900px]">
-                <svg
-                  className="pointer-events-none absolute inset-0 z-0 size-full overflow-visible"
-                  aria-hidden="true"
-                >
-                  {document.edges.map((edge) => {
-                    const source = document.nodes.find(
-                      (node) => node.id === edge.source
-                    )
-                    const target = document.nodes.find(
-                      (node) => node.id === edge.target
-                    )
-                    if (!source || !target) return null
-                    return (
-                      <line
-                        key={edge.id}
-                        x1={source.x + 160}
-                        y1={source.y + 30}
-                        x2={target.x}
-                        y2={target.y + 30}
-                        stroke="currentColor"
-                        strokeOpacity="0.55"
-                        strokeWidth="1.5"
-                        strokeDasharray="6 5"
-                        strokeLinecap="round"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                    )
-                  })}
-                </svg>
-                {document.nodes.map((node) => (
-                  <div
-                    key={node.id}
-                    draggable={editable}
-                    onDragStart={() => {
-                      setSelectedNodeID(node.id)
-                      setDraggingNodeID(node.id)
-                    }}
-                    onDragOver={(event) => {
-                      if (draggingNodeID && draggingNodeID !== node.id) {
-                        event.preventDefault()
-                        setDropTargetID(node.id)
-                      }
-                    }}
-                    onDragEnd={dragNode}
-                    onClick={() => setSelectedNodeID(node.id)}
-                    className={`group absolute z-10 w-40 rounded-xl border bg-background p-3 shadow-sm ${dropTargetID === node.id ? "border-primary ring-2 ring-primary/30" : selectedNodeID === node.id ? "border-foreground ring-2 ring-foreground/10" : "border-border/70"}`}
-                    style={{ left: node.x, top: node.y }}
-                  >
-                    {editable && node.type !== "START" && (
-                      <Button
-                        type="button"
-                        draggable={false}
-                        variant="outline"
-                        size="icon-sm"
-                        className="absolute top-1/2 -left-5 z-20 size-7 -translate-y-1/2 rounded-full bg-background opacity-70 shadow-sm transition-opacity group-hover:opacity-100"
-                        title="在此节点之前添加"
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onDragStart={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          openNodeDialog(node.id, "before")
-                        }}
-                      >
-                        <span className="size-3 rounded-full bg-foreground ring-4 ring-background" />
-                      </Button>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <GripVertical className="size-3 text-muted-foreground" />
-                      <span className="text-xs font-semibold">
-                        {nodeLabels[node.type] ?? node.type}
-                      </span>
-                    </div>
-                    <p className="mt-2 truncate text-xs text-muted-foreground">
-                      {node.label}
-                    </p>
-                    {editable && node.type !== "END" && (
-                      <Button
-                        type="button"
-                        draggable={false}
-                        variant="outline"
-                        size="icon-sm"
-                        className="absolute top-1/2 -right-5 z-20 size-7 -translate-y-1/2 rounded-full bg-background opacity-70 shadow-sm transition-opacity group-hover:opacity-100"
-                        title="在此节点之后添加"
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onDragStart={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          openNodeDialog(node.id, "after")
-                        }}
-                      >
-                        <span className="size-3 rounded-full bg-foreground ring-4 ring-background" />
-                      </Button>
-                    )}
+            <div className="rounded-2xl border border-dashed bg-muted/20 p-6">
+              <div className="mx-auto max-w-xl">
+                {!magnetic && (
+                  <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                    当前流程包含分支或非线性连线，已保留原定义。磁吸排序仅对线性流程开放，避免误改生产流程拓扑。
                   </div>
-                ))}
+                )}
+                {magnetic ? (
+                  <>
+                    <Block
+                      node={blocks[0]}
+                      selected={selectedNodeID === blocks[0]?.id}
+                      draggable={false}
+                      onSelect={() =>
+                        setSelectedNodeID(blocks[0]?.id ?? "start")
+                      }
+                    />
+                    {blocks.slice(1, -1).map((node, index) => (
+                      <div key={node.id}>
+                        <DropSlot
+                          active={dropIndex === index}
+                          onDragOver={(event) => onDragOver(event, index)}
+                          onDrop={(event) => onDrop(event, index)}
+                        />
+                        <Block
+                          node={node}
+                          selected={selectedNodeID === node.id}
+                          draggable={editable}
+                          onSelect={() => setSelectedNodeID(node.id)}
+                          onDragStart={() => {
+                            setDraggingID(node.id)
+                            setSelectedNodeID(node.id)
+                          }}
+                          onDragEnd={() => {
+                            setDraggingID(null)
+                            setDropIndex(null)
+                          }}
+                        />
+                      </div>
+                    ))}
+                    <DropSlot
+                      active={dropIndex === Math.max(0, blocks.length - 2)}
+                      onDragOver={(event) =>
+                        onDragOver(event, Math.max(0, blocks.length - 2))
+                      }
+                      onDrop={(event) =>
+                        onDrop(event, Math.max(0, blocks.length - 2))
+                      }
+                    />
+                    <Block
+                      node={blocks.at(-1)}
+                      selected={selectedNodeID === blocks.at(-1)?.id}
+                      draggable={false}
+                      onSelect={() =>
+                        setSelectedNodeID(blocks.at(-1)?.id ?? "end")
+                      }
+                    />
+                  </>
+                ) : (
+                  <div className="space-y-3">
+                    {blocks.map((node) => (
+                      <Block
+                        key={node.id}
+                        node={node}
+                        selected={selectedNodeID === node.id}
+                        draggable={false}
+                        onSelect={() => setSelectedNodeID(node.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+                <div className="mt-5 flex justify-center">
+                  <Button
+                    disabled={!editable || !magnetic}
+                    onClick={openNodeDialog}
+                  >
+                    <Plus />
+                    新增积木
+                  </Button>
+                </div>
               </div>
             </div>
             {issues.length > 0 && (
@@ -599,28 +624,22 @@ export function FlowEditorPage() {
               </div>
             )}
             {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button disabled={!editable} onClick={() => openNodeDialog()}>
-                <Plus />
-                新增节点
-              </Button>
-            </div>
           </CardContent>
         </Card>
         <Card className="border-border/70 shadow-none">
           <CardHeader>
-            <CardTitle>节点属性</CardTitle>
+            <CardTitle>积木属性</CardTitle>
             <CardDescription>
               {selectedNode
                 ? `${nodeLabels[selectedNode.type] ?? selectedNode.type} · ${selectedNode.id}`
-                : "请选择节点"}
+                : "请选择积木"}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {selectedNode && (
               <>
                 <div className="space-y-2">
-                  <Label>节点名称</Label>
+                  <Label>积木名称</Label>
                   <Input
                     disabled={!editable}
                     value={selectedNode.label}
@@ -761,7 +780,7 @@ export function FlowEditorPage() {
                   onClick={removeNode}
                 >
                   <Trash2 />
-                  删除节点
+                  删除积木
                 </Button>
               </>
             )}
@@ -771,14 +790,14 @@ export function FlowEditorPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>新增流程节点</DialogTitle>
+            <DialogTitle>新增流程积木</DialogTitle>
             <DialogDescription>
-              节点创建后会加入当前流程路径，详细参数在右侧属性栏配置。
+              选择节点类型。创建后会吸附到流程末端，再拖到任意吸附槽调整顺序。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>节点类型</Label>
+              <Label>积木类型</Label>
               <Select
                 value={newType}
                 onValueChange={(type) => {
@@ -799,7 +818,7 @@ export function FlowEditorPage() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>节点名称</Label>
+              <Label>积木名称</Label>
               <Input
                 value={newLabel}
                 onChange={(event) => setNewLabel(event.target.value)}
@@ -812,7 +831,7 @@ export function FlowEditorPage() {
             </Button>
             <Button onClick={addNode}>
               <Plus />
-              创建节点
+              创建积木
             </Button>
           </DialogFooter>
         </DialogContent>
