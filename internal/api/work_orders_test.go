@@ -60,8 +60,10 @@ func TestWorkOrderWorkflowAPI(t *testing.T) {
 	require.Equal(t, http.StatusOK, firstComplete.Code)
 	secondStart := doWorkOrderRequest(t, router, token, http.MethodPost, "/api/work-orders/1/steps/"+strconv.Itoa(int(secondStepID))+"/start", map[string]any{})
 	require.Equal(t, http.StatusOK, secondStart.Code)
-	secondComplete := doWorkOrderRequest(t, router, token, http.MethodPost, "/api/work-orders/1/steps/"+strconv.Itoa(int(secondStepID))+"/complete", map[string]any{"passed_qty": 9, "failed_qty": 1, "reason": "外观缺陷"})
+	secondComplete := doWorkOrderRequestWithHeaders(t, router, token, http.MethodPost, "/api/work-orders/1/steps/"+strconv.Itoa(int(secondStepID))+"/report", map[string]any{"passed_qty": 9, "failed_qty": 1, "reason": "外观缺陷"}, map[string]string{"Idempotency-Key": "report-test-001", "X-Production-Source": "plc"})
 	require.Equal(t, http.StatusOK, secondComplete.Code)
+	retriedReport := doWorkOrderRequestWithHeaders(t, router, token, http.MethodPost, "/api/work-orders/1/steps/"+strconv.Itoa(int(secondStepID))+"/report", map[string]any{"passed_qty": 9, "failed_qty": 1, "reason": "外观缺陷"}, map[string]string{"Idempotency-Key": "report-test-001", "X-Production-Source": "plc"})
+	require.Equal(t, http.StatusOK, retriedReport.Code)
 
 	var completed struct {
 		WorkOrder models.WorkOrder `json:"work_order"`
@@ -72,15 +74,22 @@ func TestWorkOrderWorkflowAPI(t *testing.T) {
 	require.Equal(t, 1, completed.WorkOrder.FailedQty)
 	var eventCount int64
 	require.NoError(t, db.Model(&models.ProductionEvent{}).Where("work_order_id = ?", created.WorkOrder.ID).Count(&eventCount).Error)
-	require.GreaterOrEqual(t, eventCount, int64(6))
+	require.Equal(t, int64(6), eventCount)
 }
 
 func doWorkOrderRequest(t *testing.T, router *gin.Engine, token, method, path string, payload any) *httptest.ResponseRecorder {
+	return doWorkOrderRequestWithHeaders(t, router, token, method, path, payload, nil)
+}
+
+func doWorkOrderRequestWithHeaders(t *testing.T, router *gin.Engine, token, method, path string, payload any, headers map[string]string) *httptest.ResponseRecorder {
 	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 	req := httptest.NewRequest(method, path, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 	return response

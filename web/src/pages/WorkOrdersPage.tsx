@@ -96,7 +96,7 @@ export function WorkOrdersPage() {
   async function finishStep(event: FormEvent) {
     event.preventDefault(); if (!selected || !completeStep) return
     setWorkflowLoading(true)
-    try { const result = await api<{ work_order: WorkOrder }>(`/api/work-orders/${selected.id}/steps/${completeStep.id}/complete`, { method: "POST", body: JSON.stringify({ passed_qty: Number(completeForm.passed_qty), failed_qty: Number(completeForm.failed_qty), reason: completeForm.reason, notes: completeForm.notes }) }); setSelected(result.work_order); setCompleteStep(null); await loadOrders() } catch (err) { setError(err instanceof Error ? err.message : "完成工序失败") } finally { setWorkflowLoading(false) }
+    try { const result = await api<{ work_order: WorkOrder }>(`/api/work-orders/${selected.id}/steps/${completeStep.id}/report`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID(), "X-Production-Source": "operator" }, body: JSON.stringify({ passed_qty: Number(completeForm.passed_qty), failed_qty: Number(completeForm.failed_qty), reason: completeForm.reason, notes: completeForm.notes }) }); setSelected(result.work_order); setCompleteStep(null); await loadOrders() } catch (err) { setError(err instanceof Error ? err.message : "完成工序失败") } finally { setWorkflowLoading(false) }
   }
   function addStep() { setForm((current) => ({ ...current, steps: [...current.steps, newStep(current.steps.length + 1)] })) }
   function updateStep(index: number, value: Partial<StepForm>) { setForm((current) => ({ ...current, steps: current.steps.map((step, stepIndex) => stepIndex === index ? { ...step, ...value } : step) })) }

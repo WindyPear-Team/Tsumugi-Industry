@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -52,10 +53,11 @@ type workOrderRequest struct {
 }
 
 type stepCompleteRequest struct {
-	PassedQty int    `json:"passed_qty"`
-	FailedQty int    `json:"failed_qty"`
-	Reason    string `json:"reason" binding:"max=255"`
-	Notes     string `json:"notes"`
+	PassedQty int             `json:"passed_qty"`
+	FailedQty int             `json:"failed_qty"`
+	Reason    string          `json:"reason" binding:"max=255"`
+	Notes     string          `json:"notes"`
+	Payload   json.RawMessage `json:"payload"`
 }
 
 func (r *Router) workOrders(c *gin.Context) {
@@ -294,10 +296,34 @@ func (r *Router) transitionWorkOrder(c *gin.Context, action string) {
 	c.JSON(http.StatusOK, gin.H{"work_order": order})
 }
 
-func (r *Router) startWorkOrderStep(c *gin.Context)    { r.transitionWorkOrderStep(c, "start") }
-func (r *Router) completeWorkOrderStep(c *gin.Context) { r.transitionWorkOrderStep(c, "complete") }
+func (r *Router) startWorkOrderStep(c *gin.Context) {
+	r.transitionWorkOrderStep(c, "start", "operator", "")
+}
+func (r *Router) completeWorkOrderStep(c *gin.Context) {
+	r.transitionWorkOrderStep(c, "complete", "operator", "")
+}
 
-func (r *Router) transitionWorkOrderStep(c *gin.Context, action string) {
+// reportWorkOrderStep is the machine/gateway-facing entry point. The
+// Idempotency-Key is mandatory because PLC gateways retry messages when a
+// connection drops; a retry must never count the same production result twice.
+func (r *Router) reportWorkOrderStep(c *gin.Context) {
+	key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if key == "" || len(key) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header is required and must be at most 128 characters"})
+		return
+	}
+	source := strings.TrimSpace(c.GetHeader("X-Production-Source"))
+	if source == "" {
+		source = "gateway"
+	}
+	if source != "gateway" && source != "plc" && source != "operator" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "X-Production-Source must be gateway, plc, or operator"})
+		return
+	}
+	r.transitionWorkOrderStep(c, "complete", source, key)
+}
+
+func (r *Router) transitionWorkOrderStep(c *gin.Context, action, source, idempotencyKey string) {
 	orderID, err := parseID(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid work order id"})
@@ -316,6 +342,27 @@ func (r *Router) transitionWorkOrderStep(c *gin.Context, action string) {
 		}
 	}
 	user := auth.CurrentUser(c)
+	if idempotencyKey != "" {
+		var existing models.ProductionEvent
+		lookupErr := r.db.Where("idempotency_key = ?", idempotencyKey).First(&existing).Error
+		if lookupErr == nil {
+			if existing.WorkOrderID != orderID || existing.WorkOrderStepID == nil || *existing.WorkOrderStepID != uint(stepID) {
+				c.JSON(http.StatusConflict, gin.H{"error": "Idempotency-Key was already used for another production report"})
+				return
+			}
+			order, loadErr := loadWorkOrder(r.db, orderID, true)
+			if loadErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": loadErr.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"work_order": order, "idempotent": true})
+			return
+		}
+		if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": lookupErr.Error()})
+			return
+		}
+	}
 	var order models.WorkOrder
 	err = r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&order, orderID).Error; err != nil {
@@ -367,7 +414,7 @@ func (r *Router) transitionWorkOrderStep(c *gin.Context, action string) {
 			if err := updateWorkOrderVersion(tx, &order, map[string]any{"status": workOrderCompleted, "completed_qty": request.PassedQty, "failed_qty": gorm.Expr("failed_qty + ?", request.FailedQty), "current_sequence": step.Sequence}); err != nil {
 				return err
 			}
-			return appendProductionEvent(tx, &order, &step, "step_completed", stepRunning, stepCompleted, request.PassedQty, request.FailedQty, request.Reason, user)
+			return appendProductionEventWithMeta(tx, &order, &step, "step_completed", stepRunning, stepCompleted, request.PassedQty, request.FailedQty, request.Reason, string(request.Payload), source, idempotencyKey, user)
 		}
 		if nextErr != nil {
 			return nextErr
@@ -378,7 +425,7 @@ func (r *Router) transitionWorkOrderStep(c *gin.Context, action string) {
 		if err := updateWorkOrderVersion(tx, &order, map[string]any{"failed_qty": gorm.Expr("failed_qty + ?", request.FailedQty), "current_sequence": next.Sequence}); err != nil {
 			return err
 		}
-		return appendProductionEvent(tx, &order, &step, "step_completed", stepRunning, stepCompleted, request.PassedQty, request.FailedQty, request.Reason, user)
+		return appendProductionEventWithMeta(tx, &order, &step, "step_completed", stepRunning, stepCompleted, request.PassedQty, request.FailedQty, request.Reason, string(request.Payload), source, idempotencyKey, user)
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "work order or step not found"})
@@ -517,7 +564,14 @@ func updateWorkOrderVersion(tx *gorm.DB, order *models.WorkOrder, updates map[st
 }
 
 func appendProductionEvent(tx *gorm.DB, order *models.WorkOrder, step *models.WorkOrderStep, eventType, from, to string, passed, failed int, reason string, user *models.User) error {
-	event := models.ProductionEvent{WorkOrderID: order.ID, EventType: eventType, FromStatus: from, ToStatus: to, PassedQty: passed, FailedQty: failed, Reason: strings.TrimSpace(reason), CreatedAt: time.Now()}
+	return appendProductionEventWithMeta(tx, order, step, eventType, from, to, passed, failed, reason, "", "operator", "", user)
+}
+
+func appendProductionEventWithMeta(tx *gorm.DB, order *models.WorkOrder, step *models.WorkOrderStep, eventType, from, to string, passed, failed int, reason, payload, source, idempotencyKey string, user *models.User) error {
+	event := models.ProductionEvent{WorkOrderID: order.ID, EventType: eventType, FromStatus: from, ToStatus: to, PassedQty: passed, FailedQty: failed, Reason: strings.TrimSpace(reason), Payload: payload, Source: source, CreatedAt: time.Now()}
+	if idempotencyKey != "" {
+		event.IdempotencyKey = &idempotencyKey
+	}
 	if step != nil {
 		event.WorkOrderStepID = &step.ID
 		event.DeviceID = step.DeviceID

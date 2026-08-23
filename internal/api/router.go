@@ -88,6 +88,7 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, maintenanceService *maintenan
 	protected.POST("/work-orders/:id/complete", auth.RequirePermission("production.operate"), service.completeWorkOrder)
 	protected.POST("/work-orders/:id/steps/:stepID/start", auth.RequirePermission("production.operate"), service.startWorkOrderStep)
 	protected.POST("/work-orders/:id/steps/:stepID/complete", auth.RequirePermission("production.operate"), service.completeWorkOrderStep)
+	protected.POST("/work-orders/:id/steps/:stepID/report", auth.RequirePermission("production.operate"), service.reportWorkOrderStep)
 
 	serveFrontend := func(c *gin.Context) {
 		path := strings.TrimPrefix(c.Request.URL.Path, "/")

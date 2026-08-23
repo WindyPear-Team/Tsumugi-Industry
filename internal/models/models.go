@@ -180,6 +180,8 @@ type ProductionEvent struct {
 	FailedQty       int       `json:"failed_qty"`
 	Reason          string    `json:"reason" gorm:"size:255"`
 	Payload         string    `json:"payload" gorm:"type:text"`
+	Source          string    `json:"source" gorm:"size:32;index;not null;default:operator"`
+	IdempotencyKey  *string   `json:"-" gorm:"size:128;uniqueIndex"`
 	OperatorID      *uint     `json:"operator_id" gorm:"index"`
 	OperatorName    string    `json:"operator_name" gorm:"size:64"`
 	CreatedAt       time.Time `json:"created_at" gorm:"index"`
