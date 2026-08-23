@@ -60,6 +60,9 @@ type PLC struct {
 	Protocol   string     `json:"protocol" gorm:"size:32;not null"`
 	Host       string     `json:"host" gorm:"size:128"`
 	Port       int        `json:"port"`
+	Rack       int        `json:"rack"`
+	Slot       int        `json:"slot"`
+	UnitID     byte       `json:"unit_id"`
 	Status     string     `json:"status" gorm:"size:32;index;not null;default:offline"`
 	LastSeenAt *time.Time `json:"last_seen_at"`
 	Metadata   string     `json:"metadata" gorm:"type:text"`

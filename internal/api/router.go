@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"tsumugi-industry/internal/auth"
 	"tsumugi-industry/internal/maintenance"
 	"tsumugi-industry/internal/models"
+	"tsumugi-industry/internal/plc"
 	"tsumugi-industry/internal/system"
 
 	"github.com/gin-gonic/gin"
@@ -22,10 +24,11 @@ type Router struct {
 	db          *gorm.DB
 	auth        *auth.Manager
 	maintenance *maintenance.Service
+	plcFactory  *plc.Factory
 }
 
-func NewRouter(db *gorm.DB, manager *auth.Manager, maintenanceService *maintenance.Service, frontend fs.FS) *gin.Engine {
-	service := &Router{db: db, auth: manager, maintenance: maintenanceService}
+func NewRouter(db *gorm.DB, manager *auth.Manager, maintenanceService *maintenance.Service, plcFactory *plc.Factory, frontend fs.FS) *gin.Engine {
+	service := &Router{db: db, auth: manager, maintenance: maintenanceService, plcFactory: plcFactory}
 	router := gin.New()
 	router.RedirectTrailingSlash = false
 	// Business audit events are persisted explicitly by handlers. Do not persist
@@ -61,6 +64,8 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, maintenanceService *maintenan
 	protected.POST("/plcs", auth.RequirePermission("plcs.write"), service.createPLC)
 	protected.PUT("/plcs/:id", auth.RequirePermission("plcs.write"), service.updatePLC)
 	protected.DELETE("/plcs/:id", auth.RequirePermission("plcs.write"), service.deletePLC)
+	protected.GET("/plcs/:id/status", auth.RequirePermission("plcs.read"), service.plcStatus)
+	protected.POST("/plcs/:id/query", auth.RequirePermission("plcs.read"), service.queryPLC)
 	protected.GET("/alarms", auth.RequirePermission("alarms.read"), service.alarms)
 	protected.POST("/alarms/:id/ack", auth.RequirePermission("alarms.operate"), service.ackAlarm)
 	protected.GET("/audit", auth.RequirePermission("audit.read"), service.auditLogs)
@@ -597,6 +602,9 @@ type plcRequest struct {
 	Protocol string `json:"protocol" binding:"required,max=32"`
 	Host     string `json:"host" binding:"max=128"`
 	Port     int    `json:"port"`
+	Rack     int    `json:"rack"`
+	Slot     int    `json:"slot"`
+	UnitID   byte   `json:"unit_id"`
 	Status   string `json:"status" binding:"max=32"`
 	Metadata string `json:"metadata"`
 }
@@ -628,7 +636,7 @@ func (r *Router) createPLC(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "status must be online, offline, or maintenance"})
 		return
 	}
-	plc := models.PLC{Code: strings.TrimSpace(request.Code), Name: strings.TrimSpace(request.Name), Protocol: strings.TrimSpace(request.Protocol), Host: strings.TrimSpace(request.Host), Port: request.Port, Status: status, Metadata: request.Metadata}
+	plc := models.PLC{Code: strings.TrimSpace(request.Code), Name: strings.TrimSpace(request.Name), Protocol: strings.TrimSpace(request.Protocol), Host: strings.TrimSpace(request.Host), Port: request.Port, Rack: request.Rack, Slot: request.Slot, UnitID: request.UnitID, Status: status, Metadata: request.Metadata}
 	if err := r.db.Create(&plc).Error; err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "PLC code already exists"})
 		return
@@ -657,7 +665,7 @@ func (r *Router) updatePLC(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "PLC not found"})
 		return
 	}
-	updates := map[string]any{"code": strings.TrimSpace(request.Code), "name": strings.TrimSpace(request.Name), "protocol": strings.TrimSpace(request.Protocol), "host": strings.TrimSpace(request.Host), "port": request.Port, "metadata": request.Metadata}
+	updates := map[string]any{"code": strings.TrimSpace(request.Code), "name": strings.TrimSpace(request.Name), "protocol": strings.TrimSpace(request.Protocol), "host": strings.TrimSpace(request.Host), "port": request.Port, "rack": request.Rack, "slot": request.Slot, "unit_id": request.UnitID, "metadata": request.Metadata}
 	if request.Status != "" {
 		updates["status"] = request.Status
 		if request.Status == "online" {
@@ -701,6 +709,65 @@ func (r *Router) deletePLC(c *gin.Context) {
 
 func validPLCStatus(status string) bool {
 	return status == "online" || status == "offline" || status == "maintenance"
+}
+
+type plcQueryRequest struct {
+	Addresses []plc.ReadRequest `json:"addresses" binding:"required,min=1,max=100"`
+}
+
+func (r *Router) plcStatus(c *gin.Context) {
+	adapter, err := r.plcAdapter(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer adapter.Close(context.Background())
+	querier, ok := adapter.(plc.StatusQuerier)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "PLC protocol does not support CPU status query"})
+		return
+	}
+	status, err := querier.CPUStatus(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"protocol": adapter.Protocol(), "status": status})
+}
+
+func (r *Router) queryPLC(c *gin.Context) {
+	var request plcQueryRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	adapter, err := r.plcAdapter(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer adapter.Close(context.Background())
+	values, err := adapter.Read(c.Request.Context(), request.Addresses)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"protocol": adapter.Protocol(), "items": values})
+}
+
+func (r *Router) plcAdapter(c *gin.Context) (plc.Adapter, error) {
+	id, err := parseID(c)
+	if err != nil {
+		return nil, errors.New("invalid PLC id")
+	}
+	var controller models.PLC
+	if err := r.db.First(&controller, id).Error; err != nil {
+		return nil, fmt.Errorf("PLC not found: %w", err)
+	}
+	if r.plcFactory == nil {
+		return nil, errors.New("PLC adapter factory is unavailable")
+	}
+	return r.plcFactory.Create(plc.Config{ID: controller.ID, Code: controller.Code, Name: controller.Name, Protocol: plc.Protocol(controller.Protocol), Host: controller.Host, Port: controller.Port, Rack: controller.Rack, Slot: controller.Slot, UnitID: controller.UnitID})
 }
 
 func validDeviceStatus(status string) bool {

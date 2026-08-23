@@ -13,6 +13,7 @@ import (
 	"tsumugi-industry/internal/database"
 	"tsumugi-industry/internal/maintenance"
 	"tsumugi-industry/internal/models"
+	"tsumugi-industry/internal/plc"
 	"tsumugi-industry/internal/system"
 )
 
@@ -42,7 +43,7 @@ func main() {
 	manager := auth.NewManager(db, secret)
 	maintenanceService := maintenance.New(db, "./data/backups")
 	seedTasks(db)
-	router := api.NewRouter(db, manager, maintenanceService, dist)
+	router := api.NewRouter(db, manager, maintenanceService, plc.DefaultFactory(), dist)
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()

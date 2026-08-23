@@ -118,6 +118,15 @@ type Adapter interface {
 	Write(context.Context, []WriteRequest) error
 }
 
+type CPUStatus struct {
+	Code  int    `json:"code"`
+	Label string `json:"label"`
+}
+
+type StatusQuerier interface {
+	CPUStatus(context.Context) (CPUStatus, error)
+}
+
 type baseAdapter struct {
 	config Config
 	state  ConnectionState

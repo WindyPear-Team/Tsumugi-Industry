@@ -25,13 +25,24 @@ func TestDefaultFactoryCreatesSiemensAdapters(t *testing.T) {
 		if adapter.Config().Port != testCase.port {
 			t.Errorf("%s port = %d, want %d", testCase.protocol, adapter.Config().Port, testCase.port)
 		}
-		if err := adapter.Connect(context.Background()); err != nil {
-			t.Errorf("connect %s: %v", testCase.protocol, err)
+		if testCase.protocol != ProtocolS7Comm {
+			if err := adapter.Connect(context.Background()); err != nil {
+				t.Errorf("connect %s: %v", testCase.protocol, err)
+			}
+		}
+		if testCase.protocol != ProtocolS7Comm && adapter.State() != StateReady {
+			t.Errorf("%s state = %s, want %s", testCase.protocol, adapter.State(), StateReady)
+		}
+		if testCase.protocol == ProtocolS7Comm {
+			continue
 		}
 		if adapter.State() != StateReady {
 			t.Errorf("%s state = %s, want %s", testCase.protocol, adapter.State(), StateReady)
 		}
-		if err := adapter.Ping(context.Background()); !errors.Is(err, ErrNotImplemented) {
+		if err := adapter.Close(context.Background()); err != nil {
+			t.Errorf("connect %s: %v", testCase.protocol, err)
+		}
+		if err := adapter.Ping(context.Background()); !errors.Is(err, ErrNotImplemented) && testCase.protocol != ProtocolS7Comm {
 			t.Errorf("%s ping error = %v, want ErrNotImplemented", testCase.protocol, err)
 		}
 	}
