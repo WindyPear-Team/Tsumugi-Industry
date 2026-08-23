@@ -19,11 +19,14 @@ function AppRoutes() {
   const [initialized, setInitialized] = useState<boolean | null>(null)
   const [user, setUser] = useState<User | null>(null)
   const [systemName, setSystemName] = useState("Tsumugi Industry")
+  const [visibleItems, setVisibleItems] = useState<string[]>([])
 
   const loadSystemName = useCallback(() => {
     return api<SettingsResponse>("/api/settings").then((result) => {
       const name = result.items.find((setting) => setting.key === "system.name")?.value
       if (name) setSystemName(name)
+      const navigation = result.items.find((setting) => setting.key === "navigation.items")?.value
+      if (navigation) { try { setVisibleItems(JSON.parse(navigation)) } catch { setVisibleItems([]) } }
     })
   }, [])
 
@@ -38,7 +41,7 @@ function AppRoutes() {
   if (initialized === null) return <main className="grid min-h-svh place-items-center"><Loader2 className="size-5 animate-spin" /></main>
   if (!initialized) return <SetupPage onComplete={() => setInitialized(true)} />
   if (!user) return <LoginPage onLogin={(token, nextUser) => { localStorage.setItem("tsumugi-token", token); setUser(nextUser); void loadSystemName() }} />
-  return <Routes><Route element={<ConsoleLayout user={user} systemName={systemName} onLogout={() => { localStorage.removeItem("tsumugi-token"); setUser(null) }} />}><Route index element={<DashboardPage />} /><Route path="devices" element={<DevicesPage />} /><Route path="audit" element={<AuditPage />} /><Route path="users" element={<UsersPage />} /><Route path="roles" element={<RolesPage />} /><Route path="settings" element={<SettingsPage />} /><Route path="*" element={<Navigate to="/" replace />} /></Route></Routes>
+  return <Routes><Route element={<ConsoleLayout user={user} systemName={systemName} visibleItems={visibleItems} onLogout={() => { localStorage.removeItem("tsumugi-token"); setUser(null) }} />}><Route index element={<DashboardPage />} /><Route path="devices" element={<DevicesPage />} /><Route path="audit" element={<AuditPage />} /><Route path="users" element={<UsersPage />} /><Route path="roles" element={<RolesPage />} /><Route path="settings" element={<SettingsPage />} /><Route path="*" element={<Navigate to="/" replace />} /></Route></Routes>
 }
 
 export default function App() { return <ThemeProvider defaultTheme="system"><BrowserRouter><AppRoutes /></BrowserRouter></ThemeProvider> }

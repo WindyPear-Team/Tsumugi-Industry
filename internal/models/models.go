@@ -72,10 +72,35 @@ type AuditLog struct {
 	Action     string    `json:"action" gorm:"size:32;index"`
 	Resource   string    `json:"resource" gorm:"size:64;index"`
 	ResourceID string    `json:"resource_id" gorm:"size:64"`
-	Method     string    `json:"method" gorm:"size:16"`
-	Path       string    `json:"path" gorm:"size:255"`
-	StatusCode int       `json:"status_code"`
-	IP         string    `json:"ip" gorm:"size:64"`
+	Method     string    `json:"-" gorm:"size:16"`
+	Path       string    `json:"-" gorm:"size:255"`
+	StatusCode int       `json:"-"`
+	IP         string    `json:"-" gorm:"size:64"`
 	Detail     string    `json:"detail" gorm:"type:text"`
 	CreatedAt  time.Time `json:"created_at" gorm:"index"`
+}
+
+type ScheduledTask struct {
+	ID              uint       `json:"id" gorm:"primaryKey"`
+	Name            string     `json:"name" gorm:"size:128;not null"`
+	TaskType        string     `json:"task_type" gorm:"size:64;index;not null"`
+	IntervalSeconds int        `json:"interval_seconds" gorm:"not null;default:3600"`
+	Enabled         bool       `json:"enabled" gorm:"default:true"`
+	LastRunAt       *time.Time `json:"last_run_at"`
+	NextRunAt       *time.Time `json:"next_run_at"`
+	LastStatus      string     `json:"last_status" gorm:"size:32"`
+	LastMessage     string     `json:"last_message" gorm:"size:255"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+type Backup struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Name      string    `json:"name" gorm:"size:128;not null"`
+	Driver    string    `json:"driver" gorm:"size:32"`
+	Path      string    `json:"path" gorm:"size:255"`
+	Size      int64     `json:"size"`
+	Status    string    `json:"status" gorm:"size:32"`
+	CreatedBy string    `json:"created_by" gorm:"size:64"`
+	CreatedAt time.Time `json:"created_at"`
 }

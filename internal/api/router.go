@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"tsumugi-industry/internal/auth"
+	"tsumugi-industry/internal/maintenance"
 	"tsumugi-industry/internal/models"
 	"tsumugi-industry/internal/system"
 
@@ -17,15 +19,18 @@ import (
 )
 
 type Router struct {
-	db   *gorm.DB
-	auth *auth.Manager
+	db          *gorm.DB
+	auth        *auth.Manager
+	maintenance *maintenance.Service
 }
 
-func NewRouter(db *gorm.DB, manager *auth.Manager, frontend fs.FS) *gin.Engine {
-	service := &Router{db: db, auth: manager}
+func NewRouter(db *gorm.DB, manager *auth.Manager, maintenanceService *maintenance.Service, frontend fs.FS) *gin.Engine {
+	service := &Router{db: db, auth: manager, maintenance: maintenanceService}
 	router := gin.New()
 	router.RedirectTrailingSlash = false
-	router.Use(gin.Logger(), gin.Recovery())
+	// Business audit events are persisted explicitly by handlers. Do not persist
+	// or emit raw HTTP access logs as application audit records.
+	router.Use(gin.Recovery())
 
 	router.GET("/api/health", service.health)
 	router.GET("/api/setup/status", service.setupStatus)
@@ -33,7 +38,7 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, frontend fs.FS) *gin.Engine {
 	router.POST("/api/auth/login", service.login)
 
 	protected := router.Group("/api")
-	protected.Use(manager.Middleware(), service.audit)
+	protected.Use(manager.Middleware())
 	protected.GET("/auth/me", service.me)
 	protected.GET("/dashboard/summary", auth.RequirePermission("dashboard.read"), service.dashboard)
 	protected.GET("/users", auth.RequirePermission("users.read"), service.users)
@@ -55,6 +60,12 @@ func NewRouter(db *gorm.DB, manager *auth.Manager, frontend fs.FS) *gin.Engine {
 	protected.GET("/alarms", auth.RequirePermission("alarms.read"), service.alarms)
 	protected.POST("/alarms/:id/ack", auth.RequirePermission("alarms.operate"), service.ackAlarm)
 	protected.GET("/audit", auth.RequirePermission("audit.read"), service.auditLogs)
+	protected.GET("/tasks", auth.RequirePermission("system.settings"), service.tasks)
+	protected.PUT("/tasks/:id", auth.RequirePermission("system.settings"), service.updateTask)
+	protected.POST("/maintenance/cleanup-logs", auth.RequirePermission("system.settings"), service.cleanupLogs)
+	protected.GET("/backups", auth.RequirePermission("system.settings"), service.backups)
+	protected.POST("/backups", auth.RequirePermission("system.settings"), service.createBackup)
+	protected.POST("/backups/:id/restore", auth.RequirePermission("system.settings"), service.restoreBackup)
 
 	serveFrontend := func(c *gin.Context) {
 		path := strings.TrimPrefix(c.Request.URL.Path, "/")
@@ -135,6 +146,7 @@ func (r *Router) login(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"token": token, "user": user})
+	r.recordEvent(user, "login", "auth", "登录系统", c)
 }
 
 func (r *Router) me(c *gin.Context) {
@@ -157,14 +169,15 @@ func (r *Router) dashboard(c *gin.Context) {
 
 func (r *Router) users(c *gin.Context) {
 	var users []models.User
-	query := applyTableQuery(r.db, c,
+	query := applyTableQuery(r.db.Model(&models.User{}), c,
 		map[string]string{"id": "id", "username": "username", "display_name": "display_name", "email": "email", "is_active": "is_active"},
 		map[string]string{"filter_username": "username", "filter_display_name": "display_name", "filter_email": "email", "filter_is_active": "is_active"}, "id")
-	if err := query.Preload("Roles").Find(&users).Error; err != nil {
+	query, page := paginate(query.Preload("Roles"), c)
+	if err := query.Find(&users).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": users})
+	c.JSON(http.StatusOK, gin.H{"items": users, "page": page})
 }
 
 type createUserRequest struct {
@@ -212,6 +225,7 @@ func (r *Router) createUser(c *gin.Context) {
 	}
 	r.db.Preload("Roles").First(&user, user.ID)
 	c.JSON(http.StatusCreated, gin.H{"user": user})
+	r.recordEvent(auth.CurrentUser(c), "create", "user", "创建用户 "+user.Username, c)
 }
 
 func (r *Router) updateUser(c *gin.Context) {
@@ -257,6 +271,7 @@ func (r *Router) updateUser(c *gin.Context) {
 	}
 	r.db.Preload("Roles").First(&user, id)
 	c.JSON(http.StatusOK, gin.H{"user": user})
+	r.recordEvent(auth.CurrentUser(c), "update", "user", "修改用户 "+user.Username, c)
 }
 
 func (r *Router) deleteUser(c *gin.Context) {
@@ -278,18 +293,20 @@ func (r *Router) deleteUser(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+	r.recordEvent(current, "delete", "user", "删除用户", c)
 }
 
 func (r *Router) roles(c *gin.Context) {
 	var roles []models.Role
-	query := applyTableQuery(r.db, c,
+	query := applyTableQuery(r.db.Model(&models.Role{}), c,
 		map[string]string{"id": "id", "name": "name", "display_name": "display_name"},
 		map[string]string{"filter_name": "name", "filter_display_name": "display_name", "filter_description": "description"}, "id")
-	if err := query.Preload("Permissions").Find(&roles).Error; err != nil {
+	query, page := paginate(query.Preload("Permissions"), c)
+	if err := query.Find(&roles).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": roles})
+	c.JSON(http.StatusOK, gin.H{"items": roles, "page": page})
 }
 
 type createRoleRequest struct {
@@ -323,6 +340,7 @@ func (r *Router) createRole(c *gin.Context) {
 	}
 	r.db.Preload("Permissions").First(&role, role.ID)
 	c.JSON(http.StatusCreated, gin.H{"role": role})
+	r.recordEvent(auth.CurrentUser(c), "create", "role", "创建角色 "+role.Name, c)
 }
 
 func (r *Router) updateRole(c *gin.Context) {
@@ -358,6 +376,7 @@ func (r *Router) updateRole(c *gin.Context) {
 	}
 	r.db.Preload("Permissions").First(&role, id)
 	c.JSON(http.StatusOK, gin.H{"role": role})
+	r.recordEvent(auth.CurrentUser(c), "update", "role", "修改角色 "+role.Name, c)
 }
 
 func (r *Router) deleteRole(c *gin.Context) {
@@ -380,6 +399,7 @@ func (r *Router) deleteRole(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+	r.recordEvent(auth.CurrentUser(c), "delete", "role", "删除角色 "+role.Name, c)
 }
 
 func (r *Router) permissions(c *gin.Context) {
@@ -393,14 +413,15 @@ func (r *Router) permissions(c *gin.Context) {
 
 func (r *Router) settings(c *gin.Context) {
 	var settings []models.SystemSetting
-	query := applyTableQuery(r.db.Where("key NOT LIKE ?", "auth.%"), c,
+	query := applyTableQuery(r.db.Model(&models.SystemSetting{}).Where("key NOT LIKE ?", "auth.%"), c,
 		map[string]string{"key": "key", "value": "value"},
 		map[string]string{"filter_key": "key", "filter_value": "value"}, "key")
+	query, page := paginate(query, c)
 	if err := query.Find(&settings).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": settings})
+	c.JSON(http.StatusOK, gin.H{"items": settings, "page": page})
 }
 
 func (r *Router) updateSetting(c *gin.Context) {
@@ -422,22 +443,24 @@ func (r *Router) updateSetting(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"setting": setting})
+	r.recordEvent(auth.CurrentUser(c), "update", "setting", "修改设置 "+key, c)
 }
 
 func (r *Router) devices(c *gin.Context) {
 	var devices []models.Device
-	query := applyTableQuery(r.db, c,
+	query := applyTableQuery(r.db.Model(&models.Device{}), c,
 		map[string]string{"id": "id", "code": "code", "name": "name", "type": "type", "location": "location", "status": "status"},
 		map[string]string{"filter_code": "code", "filter_name": "name", "filter_type": "type", "filter_location": "location", "filter_status": "status"}, "id")
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + search + "%"
 		query = query.Where("code LIKE ? OR name LIKE ? OR location LIKE ?", like, like, like)
 	}
+	query, page := paginate(query, c)
 	if err := query.Find(&devices).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": devices})
+	c.JSON(http.StatusOK, gin.H{"items": devices, "page": page})
 }
 
 type createDeviceRequest struct {
@@ -473,6 +496,7 @@ func (r *Router) createDevice(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"device": device})
+	r.recordEvent(auth.CurrentUser(c), "create", "device", "接入设备 "+device.Name, c)
 }
 
 func (r *Router) updateDeviceStatus(c *gin.Context) {
@@ -503,6 +527,7 @@ func (r *Router) updateDeviceStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"device": device})
+	r.recordEvent(auth.CurrentUser(c), "update", "device", "修改设备 "+device.Name, c)
 }
 
 func (r *Router) updateDevice(c *gin.Context) {
@@ -555,6 +580,7 @@ func (r *Router) deleteDevice(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+	r.recordEvent(auth.CurrentUser(c), "delete", "device", "删除设备", c)
 }
 
 func validDeviceStatus(status string) bool {
@@ -593,18 +619,20 @@ func (r *Router) ackAlarm(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"alarm": alarm})
+	r.recordEvent(auth.CurrentUser(c), "acknowledge", "alarm", "确认告警", c)
 }
 
 func (r *Router) auditLogs(c *gin.Context) {
 	var logs []models.AuditLog
-	query := applyTableQuery(r.db, c,
-		map[string]string{"id": "id", "username": "username", "action": "action", "resource": "resource", "method": "method", "path": "path", "status_code": "status_code", "created_at": "created_at"},
-		map[string]string{"filter_username": "username", "filter_action": "action", "filter_resource": "resource", "filter_method": "method", "filter_path": "path", "filter_status_code": "status_code"}, "created_at")
-	if err := query.Limit(200).Find(&logs).Error; err != nil {
+	query := applyTableQuery(r.db.Model(&models.AuditLog{}), c,
+		map[string]string{"id": "id", "username": "username", "action": "action", "resource": "resource", "detail": "detail", "created_at": "created_at"},
+		map[string]string{"filter_username": "username", "filter_action": "action", "filter_resource": "resource", "filter_detail": "detail"}, "created_at")
+	query, page := paginate(query, c)
+	if err := query.Find(&logs).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": logs})
+	c.JSON(http.StatusOK, gin.H{"items": logs, "page": page})
 }
 
 func parseID(c *gin.Context) (uint, error) {
@@ -612,19 +640,108 @@ func parseID(c *gin.Context) (uint, error) {
 	return uint(parsed), err
 }
 
-func (r *Router) audit(c *gin.Context) {
-	c.Next()
-	user := auth.CurrentUser(c)
-	if user == nil || !strings.HasPrefix(c.Request.URL.Path, "/api/") {
+func (r *Router) recordEvent(user *models.User, action, resource, detail string, c *gin.Context) {
+	if user == nil {
 		return
 	}
-	resource := strings.TrimPrefix(c.Request.URL.Path, "/api/")
-	if index := strings.IndexByte(resource, '/'); index >= 0 {
-		resource = resource[:index]
+	_ = r.db.Create(&models.AuditLog{UserID: &user.ID, Username: user.Username, Action: action, Resource: resource, Detail: detail, CreatedAt: time.Now()}).Error
+}
+
+func (r *Router) tasks(c *gin.Context) {
+	var tasks []models.ScheduledTask
+	query := applyTableQuery(r.db.Model(&models.ScheduledTask{}), c, map[string]string{"id": "id", "name": "name", "task_type": "task_type", "enabled": "enabled", "last_status": "last_status"}, map[string]string{"filter_name": "name", "filter_task_type": "task_type", "filter_enabled": "enabled", "filter_last_status": "last_status"}, "id")
+	query, page := paginate(query, c)
+	if err := query.Find(&tasks).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-	action := strings.ToLower(c.Request.Method)
-	if action == http.MethodGet {
-		action = "read"
+	c.JSON(http.StatusOK, gin.H{"items": tasks, "page": page})
+}
+
+func (r *Router) updateTask(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+		return
 	}
-	_ = r.db.Create(&models.AuditLog{UserID: &user.ID, Username: user.Username, Action: action, Resource: resource, Method: c.Request.Method, Path: c.Request.URL.Path, StatusCode: c.Writer.Status(), IP: c.ClientIP()}).Error
+	var payload struct {
+		Enabled         *bool `json:"enabled"`
+		IntervalSeconds int   `json:"interval_seconds"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var task models.ScheduledTask
+	if err := r.db.First(&task, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	updates := map[string]any{}
+	if payload.Enabled != nil {
+		updates["enabled"] = *payload.Enabled
+	}
+	if payload.IntervalSeconds > 0 {
+		updates["interval_seconds"] = payload.IntervalSeconds
+	}
+	if err := r.db.Model(&task).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	r.recordEvent(auth.CurrentUser(c), "update", "task", "修改定时任务 "+task.Name, c)
+	c.JSON(http.StatusOK, gin.H{"task": task})
+}
+
+func (r *Router) cleanupLogs(c *gin.Context) {
+	var payload struct {
+		Days int `json:"days"`
+	}
+	_ = c.ShouldBindJSON(&payload)
+	deleted, err := r.maintenance.CleanupAuditLogs(payload.Days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	r.recordEvent(auth.CurrentUser(c), "cleanup", "audit", fmt.Sprintf("清理 %d 条业务日志", deleted), c)
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
+}
+
+func (r *Router) backups(c *gin.Context) {
+	var backups []models.Backup
+	query := applyTableQuery(r.db.Model(&models.Backup{}), c, map[string]string{"id": "id", "name": "name", "status": "status", "created_at": "created_at"}, map[string]string{"filter_name": "name", "filter_status": "status", "filter_created_by": "created_by"}, "created_at")
+	query, page := paginate(query, c)
+	if err := query.Find(&backups).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": backups, "page": page})
+}
+
+func (r *Router) createBackup(c *gin.Context) {
+	backup, err := r.maintenance.CreateBackup(auth.CurrentUser(c).Username)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	r.recordEvent(auth.CurrentUser(c), "create", "backup", "创建数据库备份 "+backup.Name, c)
+	c.JSON(http.StatusCreated, gin.H{"backup": backup})
+}
+
+func (r *Router) restoreBackup(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid backup id"})
+		return
+	}
+	var backup models.Backup
+	if err := r.db.First(&backup, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "backup not found"})
+		return
+	}
+	if err := r.maintenance.RestoreBackup(backup); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	r.recordEvent(auth.CurrentUser(c), "restore", "backup", "恢复数据库备份 "+backup.Name, c)
+	c.JSON(http.StatusOK, gin.H{"message": "backup restored"})
 }
