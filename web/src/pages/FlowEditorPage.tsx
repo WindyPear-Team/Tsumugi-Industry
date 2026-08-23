@@ -241,14 +241,61 @@ export function FlowEditorPage() {
     const canvas = canvasRef.current
     if (!canvas || !editable) return
     const rect = canvas.getBoundingClientRect()
-    const x = Math.max(0, event.clientX - rect.left - 80)
-    const y = Math.max(0, event.clientY - rect.top - 30)
-    updateDocument({
-      ...document,
-      nodes: document.nodes.map((node) =>
-        node.id === nodeID ? { ...node, x, y } : node
-      ),
-    })
+    const x = Math.max(
+      0,
+      Math.round((event.clientX - rect.left - 80) / 20) * 20
+    )
+    const y = Math.max(0, Math.round((event.clientY - rect.top - 30) / 20) * 20)
+    const moved = document.nodes.map((node) =>
+      node.id === nodeID ? { ...node, x, y } : node
+    )
+    updateDocument(
+      isLinearFlow(document)
+        ? reflowLinearFlow({ ...document, nodes: moved })
+        : { ...document, nodes: moved }
+    )
+  }
+
+  function isLinearFlow(flowDocument: FlowDocument) {
+    if (
+      flowDocument.nodes.some((node) =>
+        ["IF", "PARALLEL", "LOOP"].includes(node.type)
+      )
+    )
+      return false
+    const incoming = new Map<string, number>()
+    const outgoing = new Map<string, number>()
+    for (const edge of flowDocument.edges) {
+      incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
+      outgoing.set(edge.source, (outgoing.get(edge.source) ?? 0) + 1)
+    }
+    return [...incoming.values(), ...outgoing.values()].every(
+      (count) => count <= 1
+    )
+  }
+
+  function reflowLinearFlow(flowDocument: FlowDocument): FlowDocument {
+    const start = flowDocument.nodes.find((node) => node.type === "START")
+    const end = flowDocument.nodes.find((node) => node.type === "END")
+    if (!start || !end) return flowDocument
+    const middle = flowDocument.nodes
+      .filter((node) => !["START", "END"].includes(node.type))
+      .sort((a, b) => a.x - b.x || a.y - b.y)
+    const ordered = [start, ...middle, end]
+    const positions = new Map(
+      ordered.map((node, index) => [node.id, { x: 40 + index * 220, y: 180 }])
+    )
+    const nodes = flowDocument.nodes.map((node) =>
+      positions.has(node.id) ? { ...node, ...positions.get(node.id) } : node
+    )
+    const edges = ordered
+      .slice(0, -1)
+      .map((node, index) => ({
+        id: `${node.id}-auto-${ordered[index + 1].id}`,
+        source: node.id,
+        target: ordered[index + 1].id,
+      }))
+    return { nodes, edges }
   }
   function removeNode() {
     if (
@@ -354,7 +401,7 @@ export function FlowEditorPage() {
               {flow && ` · v${flow.version}`}
             </CardTitle>
             <CardDescription>
-              独立流程编辑器。节点通过弹窗创建，当前节点属性固定显示在右侧栏。
+              独立流程编辑器。线性流程拖动节点会自动排序并重建连线，分支流程保留既有连接。
             </CardDescription>
           </CardHeader>
           <CardContent>
