@@ -294,6 +294,8 @@ function BrandSettings({
   const navigation = [
     { id: "overview", label: "运行总览" },
     { id: "work-orders", label: "生产工单" },
+    { id: "flows", label: "流程定义" },
+    { id: "variables", label: "PLC 变量" },
     { id: "plcs", label: "PLC 管理" },
     { id: "devices", label: "设备接入" },
     { id: "audit", label: "审计日志" },

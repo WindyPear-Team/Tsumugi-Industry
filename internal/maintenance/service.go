@@ -71,6 +71,10 @@ func (s *Service) CreateBackup(createdBy string) (models.Backup, error) {
 	var workOrders []models.WorkOrder
 	var workOrderSteps []models.WorkOrderStep
 	var productionEvents []models.ProductionEvent
+	var variables []models.PLCVariable
+	var flows []models.FlowDefinition
+	var flowRuns []models.FlowRun
+	var flowNodeRuns []models.FlowNodeRun
 	s.db.Find(&users)
 	s.db.Find(&roles)
 	s.db.Find(&permissions)
@@ -78,7 +82,11 @@ func (s *Service) CreateBackup(createdBy string) (models.Backup, error) {
 	s.db.Find(&workOrders)
 	s.db.Find(&workOrderSteps)
 	s.db.Find(&productionEvents)
-	payload := map[string]any{"settings": settings, "users": users, "roles": roles, "permissions": permissions, "devices": devices, "work_orders": workOrders, "work_order_steps": workOrderSteps, "production_events": productionEvents}
+	s.db.Find(&variables)
+	s.db.Find(&flows)
+	s.db.Find(&flowRuns)
+	s.db.Find(&flowNodeRuns)
+	payload := map[string]any{"settings": settings, "users": users, "roles": roles, "permissions": permissions, "devices": devices, "work_orders": workOrders, "work_order_steps": workOrderSteps, "production_events": productionEvents, "variables": variables, "flows": flows, "flow_runs": flowRuns, "flow_node_runs": flowNodeRuns}
 	content, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return models.Backup{}, err
@@ -105,6 +113,10 @@ func (s *Service) RestoreBackup(backup models.Backup) error {
 		WorkOrders       []models.WorkOrder       `json:"work_orders"`
 		WorkOrderSteps   []models.WorkOrderStep   `json:"work_order_steps"`
 		ProductionEvents []models.ProductionEvent `json:"production_events"`
+		Variables        []models.PLCVariable     `json:"variables"`
+		Flows            []models.FlowDefinition  `json:"flows"`
+		FlowRuns         []models.FlowRun         `json:"flow_runs"`
+		FlowNodeRuns     []models.FlowNodeRun     `json:"flow_node_runs"`
 	}
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return err
@@ -147,6 +159,26 @@ func (s *Service) RestoreBackup(backup models.Backup) error {
 		}
 		for _, event := range payload.ProductionEvents {
 			if err := tx.Save(&event).Error; err != nil {
+				return err
+			}
+		}
+		for _, variable := range payload.Variables {
+			if err := tx.Save(&variable).Error; err != nil {
+				return err
+			}
+		}
+		for _, flow := range payload.Flows {
+			if err := tx.Save(&flow).Error; err != nil {
+				return err
+			}
+		}
+		for _, run := range payload.FlowRuns {
+			if err := tx.Save(&run).Error; err != nil {
+				return err
+			}
+		}
+		for _, nodeRun := range payload.FlowNodeRuns {
+			if err := tx.Save(&nodeRun).Error; err != nil {
 				return err
 			}
 		}

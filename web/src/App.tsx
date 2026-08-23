@@ -14,6 +14,8 @@ import { SettingsPage } from "@/pages/SettingsPage"
 import { SetupPage } from "@/pages/SetupPage"
 import { UsersPage } from "@/pages/UsersPage"
 import { WorkOrdersPage } from "@/pages/WorkOrdersPage"
+import { VariablesPage } from "@/pages/VariablesPage"
+import { FlowsPage } from "@/pages/FlowsPage"
 
 type SettingsResponse = { items: { key: string; value: string }[] }
 
@@ -28,7 +30,7 @@ function AppRoutes() {
       const name = result.items.find((setting) => setting.key === "system.name")?.value
       if (name) setSystemName(name)
       const navigation = result.items.find((setting) => setting.key === "navigation.items")?.value
-      if (navigation) { try { const items = JSON.parse(navigation) as string[]; setVisibleItems([...new Set([...items, "work-orders", "plcs"])]) } catch { setVisibleItems([]) } }
+      if (navigation) { try { const items = JSON.parse(navigation) as string[]; setVisibleItems([...new Set([...items, "work-orders", "flows", "variables", "plcs"])]) } catch { setVisibleItems([]) } }
     })
   }, [])
 
@@ -43,7 +45,7 @@ function AppRoutes() {
   if (initialized === null) return <main className="grid min-h-svh place-items-center"><Loader2 className="size-5 animate-spin" /></main>
   if (!initialized) return <SetupPage onComplete={() => setInitialized(true)} />
   if (!user) return <LoginPage onLogin={(token, nextUser) => { localStorage.setItem("tsumugi-token", token); setUser(nextUser); void loadSystemName() }} />
-  return <Routes><Route element={<ConsoleLayout user={user} systemName={systemName} visibleItems={visibleItems} onLogout={() => { localStorage.removeItem("tsumugi-token"); setUser(null) }} />}><Route index element={<DashboardPage />} /><Route path="work-orders" element={<WorkOrdersPage />} /><Route path="devices" element={<DevicesPage />} /><Route path="plcs" element={<PLCPage />} /><Route path="audit" element={<AuditPage />} /><Route path="users" element={<UsersPage />} /><Route path="roles" element={<RolesPage />} /><Route path="settings" element={<SettingsPage />} /><Route path="*" element={<Navigate to="/" replace />} /></Route></Routes>
+  return <Routes><Route element={<ConsoleLayout user={user} systemName={systemName} visibleItems={visibleItems} onLogout={() => { localStorage.removeItem("tsumugi-token"); setUser(null) }} />}><Route index element={<DashboardPage />} /><Route path="work-orders" element={<WorkOrdersPage />} /><Route path="variables" element={<VariablesPage />} /><Route path="flows" element={<FlowsPage />} /><Route path="devices" element={<DevicesPage />} /><Route path="plcs" element={<PLCPage />} /><Route path="audit" element={<AuditPage />} /><Route path="users" element={<UsersPage />} /><Route path="roles" element={<RolesPage />} /><Route path="settings" element={<SettingsPage />} /><Route path="*" element={<Navigate to="/" replace />} /></Route></Routes>
 }
 
 export default function App() { return <ThemeProvider defaultTheme="system"><BrowserRouter><AppRoutes /></BrowserRouter></ThemeProvider> }

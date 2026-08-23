@@ -11,6 +11,26 @@ Go + Gin + GORM industrial control system foundation with an embedded Vite + Rea
 - JWT login and permission middleware foundation.
 - Black-and-white shadcn/ui console with responsive sidebar, route-based pages, and light/dark theme switching.
 - Production work orders with ordered process steps, operator workflow, PLC/gateway reports, idempotency, and audit events.
+- Protocol-neutral PLC variable catalog, versioned flow definitions, static validation, persisted flow runs, pause/resume/cancel control, and stale/offline quality tracking.
+
+## Configurable flow architecture
+
+The runtime boundary is intentionally layered:
+
+```text
+PLC driver -> semantic PLC variable -> flow definition -> flow run / scheduler -> UI
+```
+
+Engineers configure semantic names such as `Pump001.Start` in the PLC Variable
+page and map them to a PLC address such as `DB10.DBX0.0`. Flow nodes refer to
+the semantic name only. Published flow definitions are immutable; creating a
+new version keeps running instances pinned to the original definition.
+
+The current runtime implements `SET`, `GET`, `WAIT`, `IF`, `DELAY`,
+`MANUAL_CONFIRM`, `ALARM`, and flow run control. `WAIT` supports timeout,
+retry count, retry interval, and manual-confirm timeout handling. PLC writes
+remain subject to variable access, flow-write, dangerous-variable confirmation,
+and value-range checks.
 
 ## Production reporting integration
 

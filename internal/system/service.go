@@ -37,6 +37,11 @@ var DefaultPermissions = []PermissionSeed{
 	{Code: "production.read", Name: "查看生产工单"},
 	{Code: "production.write", Name: "管理生产工单"},
 	{Code: "production.operate", Name: "执行生产流转"},
+	{Code: "variables.read", Name: "查看 PLC 变量"},
+	{Code: "variables.write", Name: "管理 PLC 变量"},
+	{Code: "flows.read", Name: "查看流程定义"},
+	{Code: "flows.write", Name: "编辑流程定义"},
+	{Code: "flows.operate", Name: "执行流程"},
 }
 
 func EnsureDefaultPermissions(db *gorm.DB) error {
@@ -165,7 +170,7 @@ func Initialize(db *gorm.DB, req SetupRequest) error {
 			"system.timezone":    timezone,
 			"brand.subtitle":     "工业控制中心",
 			"brand.logo":         "",
-			"navigation.items":   `["overview","work-orders","plcs","devices","audit","users","roles","settings"]`,
+			"navigation.items":   `["overview","work-orders","flows","variables","plcs","devices","audit","users","roles","settings"]`,
 		}
 		for key, value := range settings {
 			setting := models.SystemSetting{Key: key}

@@ -54,8 +54,20 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		&models.WorkOrder{},
 		&models.WorkOrderStep{},
 		&models.ProductionEvent{},
+		&models.PLCVariable{},
+		&models.FlowDefinition{},
+		&models.FlowRun{},
+		&models.FlowNodeRun{},
 	); err != nil {
 		return nil, fmt.Errorf("migrate database: %w", err)
+	}
+	// Older builds used a globally unique flow code. Flow versions share a
+	// code, so remove that legacy index after AutoMigrate and retain the
+	// composite (code, version) uniqueness from the model tags.
+	if db.Migrator().HasIndex(&models.FlowDefinition{}, "uni_flow_definitions_code") {
+		if err := db.Migrator().DropIndex(&models.FlowDefinition{}, "uni_flow_definitions_code"); err != nil {
+			return nil, fmt.Errorf("migrate flow version index: %w", err)
+		}
 	}
 
 	return db, nil

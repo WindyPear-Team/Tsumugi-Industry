@@ -25,7 +25,7 @@ import (
 func TestWorkOrderWorkflowAPI(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:work-order-api?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.Permission{}, &models.SystemSetting{}, &models.Device{}, &models.PLC{}, &models.Alarm{}, &models.AuditLog{}, &models.ScheduledTask{}, &models.Backup{}, &models.WorkOrder{}, &models.WorkOrderStep{}, &models.ProductionEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.Permission{}, &models.SystemSetting{}, &models.Device{}, &models.PLC{}, &models.Alarm{}, &models.AuditLog{}, &models.ScheduledTask{}, &models.Backup{}, &models.WorkOrder{}, &models.WorkOrderStep{}, &models.ProductionEvent{}, &models.PLCVariable{}, &models.FlowDefinition{}, &models.FlowRun{}, &models.FlowNodeRun{}))
 	require.NoError(t, system.Initialize(db, system.SetupRequest{Username: "admin", Password: "password123", DisplayName: "管理员"}))
 	manager := auth.NewManager(db, "test-secret")
 	token, _, err := manager.Authenticate("admin", "password123")
@@ -75,6 +75,22 @@ func TestWorkOrderWorkflowAPI(t *testing.T) {
 	var eventCount int64
 	require.NoError(t, db.Model(&models.ProductionEvent{}).Where("work_order_id = ?", created.WorkOrder.ID).Count(&eventCount).Error)
 	require.Equal(t, int64(6), eventCount)
+
+	flow := doWorkOrderRequest(t, router, token, http.MethodPost, "/api/flows", map[string]any{
+		"code": "FLOW-TEST", "name": "延时测试流程", "definition": map[string]any{
+			"nodes": []map[string]any{{"id": "start", "type": "START", "label": "开始", "config": map[string]any{}}, {"id": "delay", "type": "DELAY", "label": "延时", "config": map[string]any{"seconds": 1}}, {"id": "end", "type": "END", "label": "结束", "config": map[string]any{}}},
+			"edges": []map[string]any{{"id": "e1", "source": "start", "target": "delay"}, {"id": "e2", "source": "delay", "target": "end"}},
+		},
+	})
+	require.Equal(t, http.StatusCreated, flow.Code)
+	var createdFlow struct {
+		Flow models.FlowDefinition `json:"flow"`
+	}
+	require.NoError(t, json.Unmarshal(flow.Body.Bytes(), &createdFlow))
+	published := doWorkOrderRequest(t, router, token, http.MethodPost, "/api/flows/"+strconv.Itoa(int(createdFlow.Flow.ID))+"/publish", map[string]any{})
+	require.Equal(t, http.StatusOK, published.Code)
+	newVersion := doWorkOrderRequest(t, router, token, http.MethodPost, "/api/flows/"+strconv.Itoa(int(createdFlow.Flow.ID))+"/new-version", map[string]any{})
+	require.Equal(t, http.StatusCreated, newVersion.Code)
 }
 
 func doWorkOrderRequest(t *testing.T, router *gin.Engine, token, method, path string, payload any) *httptest.ResponseRecorder {

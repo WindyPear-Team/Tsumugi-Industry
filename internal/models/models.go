@@ -186,3 +186,79 @@ type ProductionEvent struct {
 	OperatorName    string    `json:"operator_name" gorm:"size:64"`
 	CreatedAt       time.Time `json:"created_at" gorm:"index"`
 }
+
+// PLCVariable is the protocol-neutral semantic variable layer. Flow
+// definitions reference Name, never a Siemens/Modbus address.
+type PLCVariable struct {
+	ID                 uint       `json:"id" gorm:"primaryKey"`
+	Name               string     `json:"name" gorm:"size:128;uniqueIndex;not null"`
+	Description        string     `json:"description" gorm:"size:255"`
+	PLCID              uint       `json:"plc_id" gorm:"index;not null"`
+	PLC                *PLC       `json:"plc,omitempty"`
+	Address            string     `json:"address" gorm:"size:128;not null"`
+	DataType           string     `json:"data_type" gorm:"size:16;not null"`
+	AccessMode         string     `json:"access_mode" gorm:"size:16;not null;default:read"`
+	DefaultValue       string     `json:"default_value" gorm:"type:text"`
+	Unit               string     `json:"unit" gorm:"size:32"`
+	MinValue           *float64   `json:"min_value"`
+	MaxValue           *float64   `json:"max_value"`
+	EnumValues         string     `json:"enum_values" gorm:"type:text"`
+	ConditionAllowed   bool       `json:"condition_allowed" gorm:"default:true"`
+	FlowWriteAllowed   bool       `json:"flow_write_allowed" gorm:"default:false"`
+	Dangerous          bool       `json:"dangerous" gorm:"default:false"`
+	FreshnessSeconds   int        `json:"freshness_seconds" gorm:"not null;default:10"`
+	CurrentValue       string     `json:"current_value" gorm:"type:text"`
+	LastUpdatedAt      *time.Time `json:"last_updated_at"`
+	Quality            string     `json:"quality" gorm:"size:16;not null;default:unknown"`
+	CommunicationState string     `json:"communication_state" gorm:"size:16;not null;default:unknown"`
+	CreatedByID        *uint      `json:"created_by_id" gorm:"index"`
+	UpdatedByID        *uint      `json:"updated_by_id" gorm:"index"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+type FlowDefinition struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Code           string    `json:"code" gorm:"size:64;index:idx_flow_code_version,unique;not null"`
+	Name           string    `json:"name" gorm:"size:128;not null"`
+	Description    string    `json:"description" gorm:"type:text"`
+	Version        int       `json:"version" gorm:"index:idx_flow_code_version,unique;not null;default:1"`
+	Status         string    `json:"status" gorm:"size:16;index;not null;default:draft"`
+	Definition     string    `json:"definition" gorm:"type:text;not null"`
+	TimeoutSeconds int       `json:"timeout_seconds" gorm:"not null;default:0"`
+	CreatedByID    *uint     `json:"created_by_id" gorm:"index"`
+	UpdatedByID    *uint     `json:"updated_by_id" gorm:"index"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type FlowRun struct {
+	ID               uint            `json:"id" gorm:"primaryKey"`
+	FlowDefinitionID uint            `json:"flow_definition_id" gorm:"index;not null"`
+	FlowDefinition   *FlowDefinition `json:"flow_definition,omitempty"`
+	FlowVersion      int             `json:"flow_version" gorm:"not null"`
+	Status           string          `json:"status" gorm:"size:16;index;not null;default:created"`
+	CurrentNodeID    string          `json:"current_node_id" gorm:"size:128"`
+	StartedAt        *time.Time      `json:"started_at"`
+	EndedAt          *time.Time      `json:"ended_at"`
+	ErrorMessage     string          `json:"error_message" gorm:"type:text"`
+	StartedByID      *uint           `json:"started_by_id" gorm:"index"`
+	NodeRuns         []FlowNodeRun   `json:"node_runs,omitempty" gorm:"foreignKey:FlowRunID;constraint:OnDelete:CASCADE"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+type FlowNodeRun struct {
+	ID           uint       `json:"id" gorm:"primaryKey"`
+	FlowRunID    uint       `json:"flow_run_id" gorm:"index;not null"`
+	NodeID       string     `json:"node_id" gorm:"size:128;index;not null"`
+	NodeType     string     `json:"node_type" gorm:"size:32;not null"`
+	Status       string     `json:"status" gorm:"size:16;index;not null"`
+	StartedAt    *time.Time `json:"started_at"`
+	EndedAt      *time.Time `json:"ended_at"`
+	ErrorMessage string     `json:"error_message" gorm:"type:text"`
+	Attempt      int        `json:"attempt" gorm:"not null;default:1"`
+	Output       string     `json:"output" gorm:"type:text"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
