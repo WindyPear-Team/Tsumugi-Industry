@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { Cpu, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
+import { Cpu, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
 import { api, type PLC } from "@/lib/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { TableColumnMenu } from "@/components/table-column-menu"
@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 
 type Page = {
   page: number
@@ -35,6 +36,8 @@ type FormState = {
   protocol: string
   host: string
   port: string
+  rack: string
+  slot: string
 }
 const emptyForm: FormState = {
   code: "",
@@ -42,7 +45,11 @@ const emptyForm: FormState = {
   protocol: "modbus-tcp",
   host: "",
   port: "502",
+  rack: "0",
+  slot: "2",
 }
+
+type QueryResult = { address: string; value: unknown; quality: string; timestamp: string }
 
 export function PLCPage() {
   const [plcs, setPLCs] = useState<PLC[]>([])
@@ -61,6 +68,13 @@ export function PLCPage() {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [statusLoading, setStatusLoading] = useState<number | null>(null)
+  const [statusText, setStatusText] = useState<Record<number, string>>({})
+  const [queryPLC, setQueryPLC] = useState<PLC | null>(null)
+  const [queryAddresses, setQueryAddresses] = useState("DB1.DBW2\nMB10")
+  const [queryResults, setQueryResults] = useState<QueryResult[]>([])
+  const [queryLoading, setQueryLoading] = useState(false)
+  const [queryError, setQueryError] = useState("")
   const params = new URLSearchParams({
     sort_by: sortField,
     sort_order: sortOrder,
@@ -110,18 +124,51 @@ export function PLCPage() {
             protocol: plc.protocol,
             host: plc.host,
             port: String(plc.port || ""),
+            rack: String(plc.rack ?? 0),
+            slot: String(plc.slot ?? 2),
           }
         : emptyForm
     )
     setOpen(true)
     setError("")
   }
+  async function checkStatus(plc: PLC) {
+    setStatusLoading(plc.id)
+    try {
+      const result = await api<{ status: { code: number; label: string } }>(`/api/plcs/${plc.id}/status`)
+      const label = result.status.label === "run" ? "运行" : result.status.label === "stop" ? "停止" : result.status.label
+      setStatusText((current) => ({ ...current, [plc.id]: `CPU：${label}（${result.status.code}）` }))
+      setPLCs((current) => current.map((item) => item.id === plc.id ? { ...item, status: "online" } : item))
+    } catch (err) {
+      setStatusText((current) => ({ ...current, [plc.id]: err instanceof Error ? `失败：${err.message}` : "连接失败" }))
+      setPLCs((current) => current.map((item) => item.id === plc.id && item.status !== "maintenance" ? { ...item, status: "offline" } : item))
+    } finally { setStatusLoading(null) }
+  }
+  async function queryValues(event: FormEvent) {
+    event.preventDefault(); if (!queryPLC) return
+    setQueryLoading(true); setQueryError("")
+    try {
+      const addresses = queryAddresses.split(/\r?\n/).map((address) => address.trim()).filter(Boolean).map((address) => ({ address, length: 8 }))
+      if (addresses.length === 0) {
+        setQueryError("至少输入一个查询地址")
+        return
+      }
+      const result = await api<{ items: QueryResult[] }>(`/api/plcs/${queryPLC.id}/query`, { method: "POST", body: JSON.stringify({ addresses }) })
+      setQueryResults(result.items)
+      setPLCs((current) => current.map((item) => item.id === queryPLC.id ? { ...item, status: "online" } : item))
+    } catch (err) { setQueryError(err instanceof Error ? err.message : "PLC 查询失败") } finally { setQueryLoading(false) }
+  }
   async function save(event: FormEvent) {
     event.preventDefault()
     try {
       await api(editing ? `/api/plcs/${editing.id}` : "/api/plcs", {
         method: editing ? "PUT" : "POST",
-        body: JSON.stringify({ ...form, port: Number(form.port) }),
+        body: JSON.stringify({
+          ...form,
+          port: Number(form.port),
+          rack: Number(form.rack),
+          slot: Number(form.slot),
+        }),
       })
       setOpen(false)
       const result = await api<{ items: PLC[]; page: Page }>(
@@ -214,9 +261,42 @@ export function PLCPage() {
                         ? "在线"
                         : plc.status === "maintenance"
                           ? "维护中"
-                          : "离线"}
+                        : "离线"}
                     </td>
                     <td className="py-4 text-right">
+                      <div className="flex flex-wrap items-start justify-end gap-1">
+                        <div className="flex flex-col items-end">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={statusLoading === plc.id}
+                            onClick={() => void checkStatus(plc)}
+                          >
+                            {statusLoading === plc.id ? (
+                              <Loader2 className="animate-spin" />
+                            ) : (
+                              <RefreshCw />
+                            )}
+                            测试连接
+                          </Button>
+                          {statusText[plc.id] && (
+                            <p className="mt-1 max-w-40 text-xs text-muted-foreground">
+                              {statusText[plc.id]}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="查询数据"
+                          onClick={() => {
+                            setQueryPLC(plc)
+                            setQueryResults([])
+                            setQueryError("")
+                          }}
+                        >
+                          <Search />
+                        </Button>
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -232,6 +312,7 @@ export function PLCPage() {
                       >
                         <Trash2 />
                       </Button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -305,6 +386,28 @@ export function PLCPage() {
                   onChange={(event) =>
                     setForm({ ...form, port: event.target.value })
                   }
+                  />
+              </div>
+              <div className="space-y-2">
+                <Label>Rack</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.rack}
+                  onChange={(event) =>
+                    setForm({ ...form, rack: event.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Slot</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.slot}
+                  onChange={(event) =>
+                    setForm({ ...form, slot: event.target.value })
+                  }
                 />
               </div>
             </div>
@@ -318,6 +421,78 @@ export function PLCPage() {
                 取消
               </Button>
               <Button type="submit">保存</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(queryPLC)}
+        onOpenChange={(value) => !value && setQueryPLC(null)}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>查询 PLC 数据</DialogTitle>
+            <DialogDescription>
+              {queryPLC?.name}（{queryPLC?.protocol}）— 每行输入一个地址，查询结果仅用于当前诊断。
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={queryValues} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="plc-query-addresses">查询地址</Label>
+              <Textarea
+                id="plc-query-addresses"
+                rows={5}
+                value={queryAddresses}
+                onChange={(event) => setQueryAddresses(event.target.value)}
+                placeholder={"DB1.DBW2\nMB10\nIB0\nQB0"}
+              />
+              <p className="text-xs text-muted-foreground">
+                S7comm 示例：DB1.DBW2、MB10、IB0、QB0、DB1.DBX0.0。
+              </p>
+            </div>
+            {queryError && <p className="text-sm text-destructive">{queryError}</p>}
+            {queryResults.length > 0 && (
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                      <th className="px-3 py-2">地址</th>
+                      <th className="px-3 py-2">值</th>
+                      <th className="px-3 py-2">质量</th>
+                      <th className="px-3 py-2">时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {queryResults.map((item) => (
+                      <tr key={`${item.address}-${item.timestamp}`} className="border-b last:border-0">
+                        <td className="px-3 py-2 font-mono text-xs">{item.address}</td>
+                        <td className="max-w-64 break-all px-3 py-2 font-mono text-xs">
+                          {typeof item.value === "string"
+                            ? item.value
+                            : JSON.stringify(item.value)}
+                        </td>
+                        <td className="px-3 py-2">{item.quality}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
+                          {new Date(item.timestamp).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setQueryPLC(null)}
+              >
+                关闭
+              </Button>
+              <Button type="submit" disabled={queryLoading || !queryPLC}>
+                {queryLoading && <Loader2 className="animate-spin" />}
+                执行查询
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

@@ -4,7 +4,7 @@ export type Permission = { id: number; code: string; name: string; description?:
 export type Setting = { key: string; value: string }
 export type Summary = { users: number; roles: number; devices_online: number; alerts: number }
 export type Device = { id: number; plc_id?: number; plc?: PLC; code: string; name: string; type: string; location: string; status: "online" | "offline" | "maintenance"; last_seen_at?: string }
-export type PLC = { id: number; code: string; name: string; protocol: string; host: string; port: number; status: "online" | "offline" | "maintenance"; last_seen_at?: string }
+export type PLC = { id: number; code: string; name: string; protocol: string; host: string; port: number; rack?: number; slot?: number; unit_id?: number; status: "online" | "offline" | "maintenance"; last_seen_at?: string }
 export type AuditLog = { id: number; username: string; action: string; resource: string; detail: string; method?: string; path?: string; status_code?: number; ip?: string; created_at: string }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -14,5 +14,6 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     const body = await response.json().catch(() => ({}))
     throw new Error(body.error ?? "请求失败")
   }
+  if (response.status === 204) return undefined as T
   return response.json()
 }

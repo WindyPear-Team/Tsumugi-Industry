@@ -729,9 +729,11 @@ func (r *Router) plcStatus(c *gin.Context) {
 	}
 	status, err := querier.CPUStatus(c.Request.Context())
 	if err != nil {
+		r.markPLCUnreachable(c)
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	r.markPLCReachable(c)
 	c.JSON(http.StatusOK, gin.H{"protocol": adapter.Protocol(), "status": status})
 }
 
@@ -752,7 +754,30 @@ func (r *Router) queryPLC(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+	r.markPLCReachable(c)
 	c.JSON(http.StatusOK, gin.H{"protocol": adapter.Protocol(), "items": values})
+}
+
+func (r *Router) markPLCReachable(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	// Maintenance is an operator-controlled state and must not be overwritten
+	// by an automatic connectivity check.
+	r.db.Model(&models.PLC{}).Where("id = ? AND status <> ?", id, "maintenance").Updates(map[string]any{
+		"status":       "online",
+		"last_seen_at": &now,
+	})
+}
+
+func (r *Router) markPLCUnreachable(c *gin.Context) {
+	id, err := parseID(c)
+	if err != nil {
+		return
+	}
+	r.db.Model(&models.PLC{}).Where("id = ? AND status <> ?", id, "maintenance").Updates(map[string]any{"status": "offline"})
 }
 
 func (r *Router) plcAdapter(c *gin.Context) (plc.Adapter, error) {
