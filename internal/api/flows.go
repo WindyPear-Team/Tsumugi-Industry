@@ -401,10 +401,16 @@ func (r *Router) validateFlowDocument(document flowDocument) []string {
 			var variable models.PLCVariable
 			if err := r.db.Where("name = ?", variableName).First(&variable).Error; errors.Is(err, gorm.ErrRecordNotFound) {
 				issues = append(issues, "找不到变量："+variableName)
-			} else if err == nil && (strings.EqualFold(node.Type, "WAIT") || strings.EqualFold(node.Type, "IF")) && !variable.ConditionAllowed {
-				issues = append(issues, "变量禁止用于条件："+variableName)
-			} else if err == nil && strings.EqualFold(node.Type, "SET") && (!variable.FlowWriteAllowed || variable.AccessMode == "read") {
-				issues = append(issues, "变量禁止被流程写入："+variableName)
+			} else if err == nil {
+				if configuredPLC, ok := configNumber(node.Config, "plc_id"); ok && uint(configuredPLC) != variable.PLCID {
+					issues = append(issues, "变量不属于积木指定的 PLC："+variableName)
+				}
+				if (strings.EqualFold(node.Type, "WAIT") || strings.EqualFold(node.Type, "IF")) && !variable.ConditionAllowed {
+					issues = append(issues, "变量禁止用于条件："+variableName)
+				}
+				if strings.EqualFold(node.Type, "SET") && (!variable.FlowWriteAllowed || variable.AccessMode == "read") {
+					issues = append(issues, "变量禁止被流程写入："+variableName)
+				}
 			}
 		}
 	}

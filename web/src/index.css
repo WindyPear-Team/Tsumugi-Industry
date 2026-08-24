@@ -128,3 +128,25 @@
     @apply font-sans;
     }
 }
+
+@layer components {
+  .blockly-editor {
+    height: min(760px, calc(100vh - 300px));
+    min-height: 560px;
+    width: 100%;
+    overflow: hidden;
+    border: 1px solid #b6c7e7;
+    border-radius: 1rem;
+    background: #dfe8fb;
+  }
+
+  .blockly-editor .blocklyMainBackground {
+    fill: #dfe8fb;
+  }
+
+  .blockly-editor .blocklyToolboxDiv,
+  .blockly-editor .blocklyFlyout {
+    background: #eef3ff;
+  }
+
+}

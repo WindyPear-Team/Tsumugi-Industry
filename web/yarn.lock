@@ -2668,6 +2668,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"blockly@npm:^13.2.1":
+  version: 13.2.1
+  resolution: "blockly@npm:13.2.1"
+  peerDependencies:
+    jsdom: ">=27.4.0 <30.0.0"
+  checksum: 10c0/ba38c90fe73765733f7b7a91b871cd6e36a062b99512325ca322e993760c7fa62316aee13240a3c194a516f8f4a7ddff7d588632f63d0191ff8c4906dba9ece3
+  languageName: node
+  linkType: hard
+
 "body-parser@npm:^2.2.1":
   version: 2.3.0
   resolution: "body-parser@npm:2.3.0"
@@ -5929,6 +5938,7 @@ __metadata:
     "@types/react": "npm:^19"
     "@types/react-dom": "npm:^19"
     "@vitejs/plugin-react": "npm:^6"
+    blockly: "npm:^13.2.1"
     class-variance-authority: "npm:^0.7.1"
     clsx: "npm:^2.1.1"
     eslint: "npm:^10"

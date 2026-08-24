@@ -1,917 +1,324 @@
-import { useEffect, useState, type DragEvent } from "react"
-import {
-  ArrowLeft,
-  Check,
-  GripVertical,
-  Loader2,
-  Plus,
-  Save,
-  Send,
-  Trash2,
-} from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import * as Blockly from "blockly"
+import "blockly/blocks"
+import * as ZhHans from "blockly/msg/zh-hans"
+import { ArrowLeft, Check, Loader2, Save, Send } from "lucide-react"
 import { useNavigate, useParams } from "react-router-dom"
-import {
-  api,
-  type FlowDefinition,
-  type FlowDocument,
-  type FlowNode,
-  type PLCVariable,
-} from "@/lib/api"
-import { Badge } from "@/components/ui/badge"
+import { api, type FlowDefinition, type FlowDocument, type FlowNode, type PLC, type PLCVariable } from "@/lib/api"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 
-const nodeTypes = [
-  "SET",
-  "GET",
-  "WAIT",
-  "IF",
-  "DELAY",
-  "MANUAL_CONFIRM",
-  "ALARM",
-  "LOOP",
-  "PARALLEL",
-  "SUBFLOW",
-]
+const nodeTypes = ["SET", "GET", "WAIT", "IF", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW"] as const
 const nodeLabels: Record<string, string> = {
-  START: "开始",
-  END: "结束",
-  SET: "设置变量",
-  GET: "读取变量",
-  WAIT: "等待条件",
-  IF: "条件判断",
-  DELAY: "延时",
-  MANUAL_CONFIRM: "人工确认",
-  ALARM: "报警",
-  LOOP: "循环",
-  PARALLEL: "并行",
-  SUBFLOW: "子流程",
+  START: "开始", END: "结束", SET: "设置变量", GET: "读取变量", WAIT: "等待条件", IF: "如果",
+  DELAY: "延时", MANUAL_CONFIRM: "人工确认", ALARM: "报警", LOOP: "循环", PARALLEL: "并行", SUBFLOW: "子流程",
 }
-const nodeColors: Record<string, string> = {
-  START: "bg-blue-500 border-blue-600",
-  END: "bg-blue-500 border-blue-600",
-  SET: "bg-red-500 border-red-600",
-  GET: "bg-cyan-500 border-cyan-600",
-  WAIT: "bg-amber-500 border-amber-600",
-  IF: "bg-violet-500 border-violet-600",
-  DELAY: "bg-orange-500 border-orange-600",
-  MANUAL_CONFIRM: "bg-pink-500 border-pink-600",
-  ALARM: "bg-red-600 border-red-700",
-  LOOP: "bg-indigo-500 border-indigo-600",
-  PARALLEL: "bg-teal-500 border-teal-600",
-  SUBFLOW: "bg-fuchsia-500 border-fuchsia-600",
-}
+const nodeColours: Record<string, number> = { START: 210, END: 210, SET: 5, GET: 190, WAIT: 35, IF: 195, DELAY: 25, MANUAL_CONFIRM: 320, ALARM: 5, LOOP: 230, PARALLEL: 165, SUBFLOW: 275 }
+let plcOptions: [string, string][] = [["请先配置 PLC", ""]]
+let variablesByPLC = new Map<string, PLCVariable[]>()
 const emptyDocument: FlowDocument = {
   nodes: [
     { id: "start", type: "START", label: "开始", x: 80, y: 40, config: {} },
-    { id: "end", type: "END", label: "结束", x: 80, y: 160, config: {} },
+    { id: "end", type: "END", label: "结束", x: 80, y: 180, config: {} },
   ],
   edges: [{ id: "start-end", source: "start", target: "end" }],
 }
-type FlowForm = {
-  code: string
-  name: string
-  description: string
-  timeout_seconds: string
+type FlowForm = { code: string; name: string; description: string; timeout_seconds: string }
+
+function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T }
+function blockTypeForNode(type: string) { return type === "IF" ? "flow_if" : `flow_${type.toLowerCase()}` }
+function nodeTypeForBlock(type: string) { return type === "flow_if" ? "IF" : type.replace(/^flow_/, "").toUpperCase() }
+function plcFieldOptions(): [string, string][] { return plcOptions.length > 0 ? plcOptions : [["请先配置 PLC", ""]] }
+function variableFieldOptions(field: Blockly.Field<string>): [string, string][] {
+  const block = field.getSourceBlock()
+  const plcID = block?.getFieldValue("PLC_ID") ?? ""
+  const variables = variablesByPLC.get(plcID) ?? []
+  const filtered = variables.filter((variable) => {
+    if (block?.type === "flow_set") return variable.flow_write_allowed && variable.access_mode !== "read"
+    if (block?.type === "flow_wait" || block?.type === "flow_if") return variable.condition_allowed
+    return true
+  })
+  return filtered.length > 0
+    ? filtered.map((variable) => [`${variable.name} · ${variable.data_type}`, variable.name])
+    : [[plcID ? "该 PLC 暂无可用变量" : "请先选择 PLC", ""]]
 }
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T
+function selectedVariable(name: string | null) {
+  for (const variables of variablesByPLC.values()) {
+    const variable = variables.find((item) => item.name === name)
+    if (variable) return variable
+  }
+  return undefined
 }
-function newID(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+
+function defineFlowBlocks() {
+  if (Blockly.Blocks.flow_if) return
+  const definitions: Record<string, unknown> = {
+    flow_start: { init(this: Blockly.Block) { this.appendDummyInput().appendField("开始"); this.setNextStatement(true); this.setColour(nodeColours.START); this.setTooltip("流程开始") } },
+    flow_end: { init(this: Blockly.Block) { this.appendDummyInput().appendField("结束"); this.setPreviousStatement(true); this.setColour(nodeColours.END); this.setTooltip("流程结束") } },
+    flow_if: { init(this: Blockly.Block) {
+      this.appendDummyInput().appendField("如果 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
+      this.appendStatementInput("TRUE").appendField("满足")
+      this.appendDummyInput().appendField("否则")
+      this.appendStatementInput("FALSE")
+      this.setPreviousStatement(true); this.setColour(nodeColours.IF); this.setTooltip("条件分支。配置变量和比较值，并在两个分支中继续连接 Blockly 积木")
+    } },
+  }
+  for (const type of nodeTypes.filter((item) => item !== "IF")) {
+    const blockType = blockTypeForNode(type)
+    definitions[blockType] = { init(this: Blockly.Block) {
+      if (type === "SET") {
+        this.appendDummyInput().appendField("设置 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE")
+        this.appendDummyInput().appendField("写入值").appendField(new Blockly.FieldTextInput("值"), "VALUE")
+      } else if (type === "GET") {
+        this.appendDummyInput().appendField("读取 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE")
+      } else if (type === "WAIT") {
+        this.appendDummyInput().appendField("等待 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
+        this.appendDummyInput().appendField("超时秒数").appendField(new Blockly.FieldNumber(10, 1), "TIMEOUT").appendField("超时策略").appendField(new Blockly.FieldDropdown([["失败", "FAIL"], ["重试", "RETRY"], ["报警", "ALARM"], ["跳转", "JUMP"], ["人工确认", "MANUAL_CONFIRM"]]), "TIMEOUT_ACTION").appendField("最大重试").appendField(new Blockly.FieldNumber(0, 0), "MAX_RETRIES").appendField("重试间隔").appendField(new Blockly.FieldNumber(1, 0), "RETRY_INTERVAL")
+      } else if (type === "DELAY") {
+        this.appendDummyInput().appendField("延时秒数").appendField(new Blockly.FieldNumber(5, 1), "SECONDS")
+      } else if (type === "LOOP") {
+        this.appendDummyInput().appendField("循环次数").appendField(new Blockly.FieldNumber(3, 1), "MAX_ITERATIONS")
+        this.appendStatementInput("BODY").appendField("循环体")
+        this.appendStatementInput("EXIT").appendField("结束后")
+      } else if (type === "SUBFLOW") {
+        this.appendDummyInput().appendField("子流程编码").appendField(new Blockly.FieldTextInput("流程编码"), "FLOW_CODE")
+        this.appendDummyInput().appendField("超时秒数").appendField(new Blockly.FieldNumber(60, 1), "TIMEOUT")
+      } else if (type === "ALARM") {
+        this.appendDummyInput().appendField("报警消息").appendField(new Blockly.FieldTextInput("流程报警"), "MESSAGE").appendField("级别").appendField(new Blockly.FieldDropdown([["提示", "info"], ["警告", "warning"], ["严重", "critical"]]), "LEVEL")
+      } else if (type === "MANUAL_CONFIRM") {
+        this.appendDummyInput().appendField("确认提示").appendField(new Blockly.FieldTextInput("请确认"), "MESSAGE")
+      } else if (type === "PARALLEL") {
+        this.appendDummyInput().appendField("并行执行")
+        this.appendStatementInput("BRANCH_A").appendField("分支一")
+        this.appendStatementInput("BRANCH_B").appendField("分支二")
+      } else {
+        this.appendDummyInput().appendField(nodeLabels[type])
+      }
+      if (type === "LOOP" || type === "PARALLEL") this.setPreviousStatement(true)
+      else { this.setPreviousStatement(true); this.setNextStatement(true) }
+      this.setColour(nodeColours[type]); this.setTooltip(nodeLabels[type])
+    } }
+  }
+  Blockly.common.defineBlocks(definitions)
 }
+
+function toolboxDefinition() {
+  return {
+    kind: "categoryToolbox",
+    contents: [
+      { kind: "category", name: "流程", colour: String(nodeColours.START), contents: [{ kind: "block", type: "flow_start" }, { kind: "block", type: "flow_end" }, { kind: "block", type: "flow_if" }] },
+      { kind: "category", name: "节点", colour: String(nodeColours.SET), contents: nodeTypes.filter((type) => type !== "IF").map((type) => ({ kind: "block", type: blockTypeForNode(type) })) },
+    ],
+  }
+}
+
 function configFor(type: string): Record<string, unknown> {
   if (type === "LOOP") return { max_iterations: 3 }
   if (type === "DELAY") return { seconds: 5 }
-  if (["SET", "GET", "WAIT", "IF"].includes(type))
-    return {
-      variable: "",
-      operator: "==",
-      expected: true,
-      timeout_seconds: 10,
-      timeout_action: "FAIL",
-      max_retries: 0,
-    }
+  if (["SET", "GET", "WAIT", "IF"].includes(type)) return { variable: "", operator: "==", expected: true, timeout_seconds: 10, timeout_action: "FAIL", max_retries: 0, retry_interval_seconds: 1 }
   return {}
 }
 
-function chainDocument(nodes: FlowNode[]): FlowDocument {
-  const start = nodes.find((node) => node.type === "START") ?? {
-    id: "start",
-    type: "START",
-    label: "开始",
-    x: 80,
-    y: 40,
-    config: {},
-  }
-  const end = nodes.find((node) => node.type === "END") ?? {
-    id: "end",
-    type: "END",
-    label: "结束",
-    x: 80,
-    y: 160,
-    config: {},
-  }
-  const middle = nodes.filter((node) => !["START", "END"].includes(node.type))
-  const ordered = [start, ...middle, end].map((node, index) => ({
-    ...node,
-    x: 80,
-    y: 40 + index * 128,
-  }))
-  return {
-    nodes: ordered,
-    edges: ordered.slice(0, -1).map((node, index) => ({
-      id: `${node.id}-magnet-${ordered[index + 1].id}`,
-      source: node.id,
-      target: ordered[index + 1].id,
-    })),
-  }
+function parseFieldValue(value: string | null): unknown {
+  const text = String(value ?? "").trim()
+  if (text.toLowerCase() === "true") return true
+  if (text.toLowerCase() === "false") return false
+  if (text !== "" && /^-?\d+(\.\d+)?$/.test(text)) return Number(text)
+  return text
 }
 
-function isMagneticDocument(flowDocument: FlowDocument) {
-  const start = flowDocument.nodes.find((node) => node.type === "START")
-  const end = flowDocument.nodes.find((node) => node.type === "END")
-  if (!start || !end || flowDocument.nodes.length < 2) return false
-  const outgoing = new Map<string, string>()
-  const incoming = new Set<string>()
-  for (const edge of flowDocument.edges) {
-    if (outgoing.has(edge.source) || incoming.has(edge.target)) return false
-    outgoing.set(edge.source, edge.target)
-    incoming.add(edge.target)
+function configFromBlock(block: Blockly.Block, type: string) {
+  let config = configFor(type)
+  try { config = { ...config, ...(block.data ? JSON.parse(block.data) : {}) } } catch { /* old or malformed metadata */ }
+  const field = (name: string) => block.getFieldValue(name)
+  if (["SET", "GET", "WAIT", "IF"].includes(type)) {
+    config.plc_id = Number(field("PLC_ID") ?? config.plc_id ?? 0) || undefined
+    config.variable = field("VARIABLE") ?? config.variable
+    const mapped = selectedVariable(String(config.variable ?? ""))
+    if (!config.plc_id && mapped) config.plc_id = mapped.plc_id
   }
-
-  const visited = new Set<string>()
-  let current: string | undefined = start.id
-  while (current && !visited.has(current)) {
-    visited.add(current)
-    current = outgoing.get(current)
+  if (["WAIT", "IF"].includes(type)) {
+    config.operator = field("OP") ?? config.operator
+    config.expected = parseFieldValue(field("EXPECTED"))
   }
-  if (!visited.has(end.id)) return false
-  return flowDocument.edges.every(
-    (edge) => visited.has(edge.source) && visited.has(edge.target)
-  )
+  if (type === "SET") config.value = parseFieldValue(field("VALUE"))
+  if (type === "WAIT") {
+    config.timeout_seconds = Number(field("TIMEOUT") ?? config.timeout_seconds)
+    config.timeout_action = field("TIMEOUT_ACTION") ?? config.timeout_action
+    config.max_retries = Number(field("MAX_RETRIES") ?? config.max_retries)
+    config.retry_interval_seconds = Number(field("RETRY_INTERVAL") ?? 1)
+  }
+  if (type === "DELAY") config.seconds = Number(field("SECONDS") ?? config.seconds)
+  if (type === "LOOP") config.max_iterations = Number(field("MAX_ITERATIONS") ?? config.max_iterations)
+  if (type === "SUBFLOW") {
+    config.flow_code = field("FLOW_CODE") ?? ""
+    config.timeout_seconds = Number(field("TIMEOUT") ?? 60)
+  }
+  if (type === "ALARM") {
+    config.message = field("MESSAGE") ?? "流程报警"
+    config.level = field("LEVEL") ?? "warning"
+  }
+  if (type === "MANUAL_CONFIRM") config.message = field("MESSAGE") ?? "请确认"
+  return config
 }
 
-function linearNodes(flowDocument: FlowDocument) {
-  const outgoing = new Map(
-    flowDocument.edges.map((edge) => [edge.source, edge.target])
-  )
-  const byID = new Map(flowDocument.nodes.map((node) => [node.id, node]))
-  const ordered: FlowNode[] = []
-  const visited = new Set<string>()
-  let current = flowDocument.nodes.find((node) => node.type === "START")?.id
-  while (current && !visited.has(current)) {
-    const node = byID.get(current)
-    if (!node) break
-    ordered.push(node)
-    visited.add(current)
-    current = outgoing.get(current)
+function readBlockNode(block: Blockly.Block): FlowNode {
+  const type = nodeTypeForBlock(block.type)
+  const position = block.getRelativeToSurfaceXY()
+  return { id: block.id, type, label: nodeLabels[type], x: position.x, y: position.y, config: configFromBlock(block, type) }
+}
+
+function documentFromWorkspace(workspace: Blockly.WorkspaceSvg): FlowDocument {
+  const blocks = workspace.getAllBlocks(false)
+  const nodes = blocks.map(readBlockNode)
+  const edges: FlowDocument["edges"] = []
+  for (const block of blocks) {
+    const next = block.getNextBlock()
+    if (next) edges.push({ id: `${block.id}-${next.id}`, source: block.id, target: next.id })
+    if (block.type === "flow_if" || block.type === "flow_parallel" || block.type === "flow_loop") {
+      const branchInputs = block.type === "flow_if"
+        ? [["TRUE", "true"], ["FALSE", "false"]] as const
+        : block.type === "flow_parallel"
+          ? [["BRANCH_A", "parallel_1"], ["BRANCH_B", "parallel_2"]] as const
+          : [["BODY", "loop"], ["EXIT", "exit"]] as const
+      for (const [inputName, condition] of branchInputs) {
+        const child = block.getInput(inputName)?.connection?.targetBlock()
+        if (child) edges.push({ id: `${block.id}-${condition}-${child.id}`, source: block.id, target: child.id, condition })
+      }
+    }
   }
-  return ordered
+  return { nodes, edges }
 }
 
-function rebuildChain(flowDocument: FlowDocument, middle: FlowNode[]) {
-  const start = flowDocument.nodes.find((node) => node.type === "START")
-  const end = flowDocument.nodes.find((node) => node.type === "END")
-  const chain = chainDocument(
-    [start, ...middle, end].filter((node): node is FlowNode => Boolean(node))
-  )
-  const chainIDs = new Set(chain.nodes.map((node) => node.id))
-  return {
-    nodes: [
-      ...chain.nodes,
-      ...flowDocument.nodes.filter((node) => !chainIDs.has(node.id)),
-    ],
-    edges: chain.edges,
+function hydrateBlockConfig(block: Blockly.Block, node: FlowNode) {
+  const config = node.config ?? {}
+  const set = (field: string, value: unknown) => {
+    if (block.getField(field) && value !== undefined && value !== null) block.setFieldValue(String(value), field)
   }
+  set("VARIABLE", config.variable)
+  set("PLC_ID", config.plc_id ?? selectedVariable(String(config.variable ?? ""))?.plc_id)
+  set("VALUE", config.value)
+  set("OP", config.operator)
+  set("EXPECTED", config.expected)
+  set("TIMEOUT", config.timeout_seconds)
+  set("TIMEOUT_ACTION", config.timeout_action)
+  set("MAX_RETRIES", config.max_retries)
+  set("RETRY_INTERVAL", config.retry_interval_seconds)
+  set("SECONDS", config.seconds)
+  set("MAX_ITERATIONS", config.max_iterations)
+  set("FLOW_CODE", config.flow_code)
+  set("MESSAGE", config.message)
+  set("LEVEL", config.level)
 }
 
-function DropSlot({
-  active,
-  onDragOver,
-  onDrop,
-}: {
-  active: boolean
-  onDragOver: (event: DragEvent) => void
-  onDrop: (event: DragEvent) => void
-}) {
-  return (
-    <div
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      className={`-my-px h-1 rounded-sm border border-dashed transition-all ${active ? "my-1 h-12 rounded-r-full border-slate-400 bg-slate-400/50 dark:border-slate-500 dark:bg-slate-500/50" : "border-transparent"}`}
-    />
-  )
-}
-
-function Block({
-  node,
-  selected,
-  draggable,
-  onSelect,
-  onDragStart,
-  onDragEnd,
-}: {
-  node?: FlowNode
-  selected: boolean
-  draggable: boolean
-  onSelect: () => void
-  onDragStart?: () => void
-  onDragEnd?: () => void
-}) {
-  if (!node) return null
-  return (
-    <div
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onClick={onSelect}
-      className={`relative mx-auto w-full max-w-md rounded-l-md rounded-r-[2rem] border-2 p-4 text-white shadow-sm transition-shadow ${nodeColors[node.type] ?? "border-slate-600 bg-slate-500"} ${selected ? "ring-2 ring-foreground/40" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
-    >
-      <div className="flex items-center gap-3">
-        <GripVertical className="size-4 text-muted-foreground" />
-        <div>
-          <p className="font-semibold">{nodeLabels[node.type] ?? node.type}</p>
-          <p className="text-sm text-muted-foreground">{node.label}</p>
-        </div>
-        <Badge
-          className="ml-auto border-white/40 bg-black/10 text-white"
-          variant="outline"
-        >
-          {node.type}
-        </Badge>
-      </div>
-    </div>
-  )
+function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDocument) {
+  workspace.clear()
+  const blocks = new Map<string, Blockly.Block>()
+  const ifEdgeIndex = new Map<string, number>()
+  for (const node of document.nodes) {
+    const block = workspace.newBlock(blockTypeForNode(node.type))
+    block.data = JSON.stringify(node.config ?? {})
+    hydrateBlockConfig(block, node)
+    block.initSvg(); block.render(); blocks.set(node.id, block)
+  }
+  for (const edge of document.edges) {
+    const source = blocks.get(edge.source); const target = blocks.get(edge.target)
+    if (!source || !target || !target.previousConnection) continue
+    if (source.type === "flow_if" || source.type === "flow_parallel" || source.type === "flow_loop") {
+      const index = ifEdgeIndex.get(source.id) ?? 0
+      ifEdgeIndex.set(source.id, index + 1)
+      const condition = source.type === "flow_if"
+        ? (edge.condition === "false" || (!edge.condition && index > 0) ? "FALSE" : "TRUE")
+        : source.type === "flow_parallel"
+          ? (edge.condition === "parallel_2" || (!edge.condition && index > 0) ? "BRANCH_B" : "BRANCH_A")
+          : (edge.condition === "exit" || (!edge.condition && index > 0) ? "EXIT" : "BODY")
+      const input = source.getInput(condition)
+      if (input?.connection && !input.connection.targetBlock()) input.connection.connect(target.previousConnection)
+    } else if (source.nextConnection && !source.nextConnection.targetBlock()) source.nextConnection.connect(target.previousConnection)
+  }
+  for (const node of document.nodes) {
+    const block = blocks.get(node.id)
+    if (!block || block.getParent()) continue
+    block.moveBy(node.x || 40, node.y || 40)
+  }
 }
 
 export function FlowEditorPage() {
-  const { id = "new" } = useParams()
-  const navigate = useNavigate()
-  const isNew = id === "new"
+  const { id = "new" } = useParams(); const navigate = useNavigate(); const isNew = id === "new"
   const [flow, setFlow] = useState<FlowDefinition | null>(null)
-  const [variables, setVariables] = useState<PLCVariable[]>([])
   const [document, setDocument] = useState<FlowDocument>(clone(emptyDocument))
-  const [selectedNodeID, setSelectedNodeID] = useState("start")
-  const [form, setForm] = useState<FlowForm>({
-    code: "FLOW-001",
-    name: "新流程",
-    description: "",
-    timeout_seconds: "0",
-  })
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [newType, setNewType] = useState("SET")
-  const [newLabel, setNewLabel] = useState(nodeLabels.SET)
-  const [draggingID, setDraggingID] = useState<string | null>(null)
-  const [dropIndex, setDropIndex] = useState<number | null>(null)
-  const [issues, setIssues] = useState<string[]>([])
-  const [error, setError] = useState("")
-  const [saving, setSaving] = useState(false)
-  const [loading, setLoading] = useState(!isNew)
+  const [form, setForm] = useState<FlowForm>({ code: "FLOW-001", name: "新流程", description: "", timeout_seconds: "0" })
+  const [issues, setIssues] = useState<string[]>([]); const [error, setError] = useState(""); const [saving, setSaving] = useState(false); const [loading, setLoading] = useState(!isNew); const [workspaceReady, setWorkspaceReady] = useState(isNew); const [referencesReady, setReferencesReady] = useState(false)
+  const hostRef = useRef<HTMLDivElement>(null); const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null); const documentRef = useRef(document); const hydratingRef = useRef(false)
   const editable = !flow || flow.status === "draft"
-  const selectedNode = document.nodes.find((node) => node.id === selectedNodeID)
-  const magnetic = isMagneticDocument(document)
-  const blocks = magnetic ? linearNodes(document) : document.nodes
-  const chainIDs = new Set(blocks.map((node) => node.id))
-  const looseBlocks = magnetic
-    ? document.nodes.filter((node) => !chainIDs.has(node.id))
-    : []
+  useEffect(() => { documentRef.current = document }, [document])
   useEffect(() => {
-    api<{ items: PLCVariable[] }>("/api/variables?page_size=100")
-      .then((result) => setVariables(result.items))
-      .catch(() => undefined)
+    Promise.all([
+      api<{ items: PLC[] }>("/api/plcs?page_size=100"),
+      api<{ items: PLCVariable[] }>("/api/variables?page_size=100"),
+    ]).then(([plcResult, variableResult]) => {
+      plcOptions = plcResult.items.map((plc) => [`${plc.name} · ${plc.code}`, String(plc.id)])
+      variablesByPLC = new Map<string, PLCVariable[]>()
+      for (const variable of variableResult.items) {
+        const key = String(variable.plc_id)
+        variablesByPLC.set(key, [...(variablesByPLC.get(key) ?? []), variable])
+      }
+    }).catch(() => {
+      plcOptions = [["暂无可用 PLC", ""]]
+    }).finally(() => setReferencesReady(true))
   }, [])
   useEffect(() => {
     if (isNew) return
-    api<{ flow: FlowDefinition }>(`/api/flows/${id}`)
-      .then((result) => {
-        setFlow(result.flow)
-        setForm({
-          code: result.flow.code,
-          name: result.flow.name,
-          description: result.flow.description,
-          timeout_seconds: String(result.flow.timeout_seconds),
-        })
-        setDocument(JSON.parse(result.flow.definition) as FlowDocument)
-      })
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "加载流程失败")
-      )
-      .finally(() => setLoading(false))
+    api<{ flow: FlowDefinition }>(`/api/flows/${id}`).then((result) => {
+      const loaded = JSON.parse(result.flow.definition) as FlowDocument
+      setFlow(result.flow); setForm({ code: result.flow.code, name: result.flow.name, description: result.flow.description, timeout_seconds: String(result.flow.timeout_seconds) }); setDocument(loaded); documentRef.current = loaded; setWorkspaceReady(true)
+    }).catch((err) => setError(err instanceof Error ? err.message : "加载流程失败")).finally(() => setLoading(false))
   }, [id, isNew])
-  function updateNode(
-    patch: Partial<FlowNode>,
-    config?: Record<string, unknown>
-  ) {
-    if (!selectedNode || !editable) return
-    setDocument((current) => ({
-      ...current,
-      nodes: current.nodes.map((node) =>
-        node.id === selectedNode.id
-          ? {
-              ...node,
-              ...patch,
-              config: config ? { ...node.config, ...config } : node.config,
-            }
-          : node
-      ),
-    }))
-  }
-  function openNodeDialog() {
-    setNewType("SET")
-    setNewLabel(nodeLabels.SET)
-    setDialogOpen(true)
-  }
-  function addNode() {
-    if (!isMagneticDocument(document)) {
-      setError("当前流程包含分支或无效连线，磁吸积木仅支持线性流程。")
-      return
+  useEffect(() => {
+    if (!workspaceReady || !referencesReady || !hostRef.current || workspaceRef.current) return
+    defineFlowBlocks(); Blockly.setLocale(ZhHans as unknown as Record<string, string>)
+    const workspace = Blockly.inject(hostRef.current, { toolbox: toolboxDefinition(), trashcan: true, grid: { spacing: 24, length: 3, colour: "#c6d4ec", snap: true }, zoom: { controls: true, wheel: true, startScale: 1, maxScale: 1.4, minScale: 0.65 }, move: { scrollbars: true, drag: true, wheel: true } })
+    workspaceRef.current = workspace; hydratingRef.current = true; workspaceFromDocument(workspace, documentRef.current); hydratingRef.current = false
+    const listener = (event: Blockly.Events.Abstract) => {
+      if (hydratingRef.current) return
+      if (event.type === Blockly.Events.BLOCK_CHANGE && event instanceof Blockly.Events.BlockChange && event.name === "PLC_ID") {
+        const block = event.blockId ? workspace.getBlockById(event.blockId) : undefined
+        const variable = block?.getField("VARIABLE")
+        const options = variable ? variableFieldOptions(variable) : []
+        const firstVariable = options[0]?.[1]
+        if (variable && firstVariable !== undefined) variable.setValue(firstVariable)
+      }
+      const next = documentFromWorkspace(workspace); documentRef.current = next; setDocument(next)
     }
-    const node: FlowNode = {
-      id: newID(newType.toLowerCase()),
-      type: newType,
-      label: newLabel || nodeLabels[newType],
-      x: 80,
-      y: 0,
-      config: configFor(newType),
-    }
-    setDocument((current) => ({
-      ...current,
-      nodes: [...current.nodes, node],
-    }))
-    setSelectedNodeID(node.id)
-    setDialogOpen(false)
-  }
-  function removeNode() {
-    if (
-      !selectedNode ||
-      !editable ||
-      ["START", "END"].includes(selectedNode.type)
-    )
-      return
-    if (!isMagneticDocument(document)) {
-      setError("当前流程包含分支或无效连线，磁吸排序暂不可用。")
-      return
-    }
-    setDocument((current) => {
-      const remaining = current.nodes.filter(
-        (node) => node.id !== selectedNode.id
-      )
-      return rebuildChain(
-        { ...current, nodes: remaining },
-        blocks.filter(
-          (node) =>
-            !["START", "END"].includes(node.type) && node.id !== selectedNode.id
-        )
-      )
-    })
-    setSelectedNodeID("start")
-  }
-  function moveNode(fromID: string, targetIndex: number) {
-    if (!editable || !isMagneticDocument(document)) {
-      setError("当前流程包含分支或无效连线，磁吸排序暂不可用。")
-      setDraggingID(null)
-      setDropIndex(null)
-      return
-    }
-    const middle = blocks.filter(
-      (node) => !["START", "END"].includes(node.type)
-    )
-    const from = middle.findIndex((node) => node.id === fromID)
-    const node = document.nodes.find((item) => item.id === fromID)
-    if (!node || ["START", "END"].includes(node.type)) return
-    if (from >= 0) middle.splice(from, 1)
-    middle.splice(Math.max(0, Math.min(targetIndex, middle.length)), 0, node)
-    setDocument(rebuildChain(document, middle))
-    setSelectedNodeID(node.id)
-    setDraggingID(null)
-    setDropIndex(null)
-  }
-  function onDrop(event: DragEvent, targetIndex: number) {
-    event.preventDefault()
-    if (draggingID) moveNode(draggingID, targetIndex)
-  }
-  function onDragOver(event: DragEvent, targetIndex: number) {
-    if (!editable || !draggingID) return
-    event.preventDefault()
-    setDropIndex(targetIndex)
-  }
-  function detachNode(nodeID: string) {
-    if (!editable || !isMagneticDocument(document)) return
-    const middle = blocks.filter(
-      (node) => !["START", "END"].includes(node.type) && node.id !== nodeID
-    )
-    setDocument(rebuildChain(document, middle))
-    setDraggingID(null)
-    setDropIndex(null)
-  }
+    workspace.addChangeListener(listener)
+    return () => { workspace.removeChangeListener(listener); workspace.dispose(); workspaceRef.current = null }
+  }, [workspaceReady, referencesReady])
+
+  function syncDocument() { const workspace = workspaceRef.current; if (!workspace) return documentRef.current; const next = documentFromWorkspace(workspace); documentRef.current = next; setDocument(next); return next }
   async function save() {
     setSaving(true)
-    try {
-      const result = await api<{ flow: FlowDefinition }>(
-        isNew ? "/api/flows" : `/api/flows/${id}`,
-        {
-          method: isNew ? "POST" : "PUT",
-          body: JSON.stringify({
-            ...form,
-            timeout_seconds: Number(form.timeout_seconds),
-            definition: JSON.stringify(document),
-          }),
-        }
-      )
-      setFlow(result.flow)
-      navigate(`/flows/${result.flow.id}/edit`, { replace: true })
-      setError("")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "保存流程失败")
-    } finally {
-      setSaving(false)
-    }
+    try { const definition = syncDocument(); const result = await api<{ flow: FlowDefinition }>(isNew ? "/api/flows" : `/api/flows/${id}`, { method: isNew ? "POST" : "PUT", body: JSON.stringify({ ...form, timeout_seconds: Number(form.timeout_seconds), definition: JSON.stringify(definition) }) }); setFlow(result.flow); navigate(`/flows/${result.flow.id}/edit`, { replace: true }); setError("") }
+    catch (err) { setError(err instanceof Error ? err.message : "保存流程失败") } finally { setSaving(false) }
   }
   async function validate() {
-    if (!flow) {
-      setIssues(["请先保存流程"])
-      return
-    }
-    try {
-      const result = await api<{ issues: string[] }>(
-        `/api/flows/${flow.id}/validate`,
-        { method: "POST", body: "{}" }
-      )
-      setIssues(result.issues)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "流程校验失败")
-    }
+    if (!flow) { setIssues(["请先保存流程"]); return }
+    try { const result = await api<{ issues: string[] }>(`/api/flows/${flow.id}/validate`, { method: "POST", body: "{}" }); setIssues(result.issues) }
+    catch (err) { setError(err instanceof Error ? err.message : "流程校验失败") }
   }
   async function publish() {
     if (!flow) return
-    try {
-      const result = await api<{ flow: FlowDefinition }>(
-        `/api/flows/${flow.id}/publish`,
-        { method: "POST", body: "{}" }
-      )
-      setFlow(result.flow)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "发布流程失败")
-    }
+    try { const result = await api<{ flow: FlowDefinition }>(`/api/flows/${flow.id}/publish`, { method: "POST", body: "{}" }); setFlow(result.flow) }
+    catch (err) { setError(err instanceof Error ? err.message : "发布流程失败") }
   }
-  if (loading)
-    return (
-      <div className="grid min-h-96 place-items-center">
-        <Loader2 className="animate-spin" />
-      </div>
-    )
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" onClick={() => navigate("/flows")}>
-          <ArrowLeft />
-          返回流程清单
-        </Button>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={!editable || saving}
-            onClick={() => void save()}
-          >
-            <Save />
-            保存
-          </Button>
-          {flow && editable && (
-            <>
-              <Button variant="outline" onClick={() => void validate()}>
-                <Check />
-                校验
-              </Button>
-              <Button onClick={() => void publish()}>
-                <Send />
-                发布
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <Card className="min-w-0 border-border/70 shadow-none">
-          <CardHeader>
-            <CardTitle>
-              {form.name || "新流程"}
-              {flow && ` · v${flow.version}`}
-            </CardTitle>
-            <CardDescription>
-              流程积木编辑器：拖动积木到灰色吸附位即可接入或调整执行顺序，未吸附的积木可以独立放置。
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="mb-4 grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>流程编码</Label>
-                <Input
-                  disabled={!editable}
-                  value={form.code}
-                  onChange={(event) =>
-                    setForm({ ...form, code: event.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>流程名称</Label>
-                <Input
-                  disabled={!editable}
-                  value={form.name}
-                  onChange={(event) =>
-                    setForm({ ...form, name: event.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>总超时（秒）</Label>
-                <Input
-                  disabled={!editable}
-                  type="number"
-                  min="0"
-                  value={form.timeout_seconds}
-                  onChange={(event) =>
-                    setForm({ ...form, timeout_seconds: event.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>描述</Label>
-                <Input
-                  disabled={!editable}
-                  value={form.description}
-                  onChange={(event) =>
-                    setForm({ ...form, description: event.target.value })
-                  }
-                />
-              </div>
-            </div>
-            <div className="rounded-2xl border border-dashed bg-muted/20 p-6">
-              <div className="mx-auto max-w-xl">
-                {!magnetic && (
-                  <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-                    当前流程包含分支或非线性连线，已保留原定义。磁吸排序仅对线性流程开放，避免误改生产流程拓扑。
-                  </div>
-                )}
-                {magnetic ? (
-                  <>
-                    <Block
-                      node={blocks[0]}
-                      selected={selectedNodeID === blocks[0]?.id}
-                      draggable={false}
-                      onSelect={() =>
-                        setSelectedNodeID(blocks[0]?.id ?? "start")
-                      }
-                    />
-                    {blocks.slice(1, -1).map((node, index) => (
-                      <div key={node.id}>
-                        <DropSlot
-                          active={dropIndex === index}
-                          onDragOver={(event) => onDragOver(event, index)}
-                          onDrop={(event) => onDrop(event, index)}
-                        />
-                        <Block
-                          node={node}
-                          selected={selectedNodeID === node.id}
-                          draggable={editable}
-                          onSelect={() => setSelectedNodeID(node.id)}
-                          onDragStart={() => {
-                            setDraggingID(node.id)
-                            setSelectedNodeID(node.id)
-                          }}
-                          onDragEnd={() => {
-                            setDraggingID(null)
-                            setDropIndex(null)
-                          }}
-                        />
-                      </div>
-                    ))}
-                    <DropSlot
-                      active={dropIndex === Math.max(0, blocks.length - 2)}
-                      onDragOver={(event) =>
-                        onDragOver(event, Math.max(0, blocks.length - 2))
-                      }
-                      onDrop={(event) =>
-                        onDrop(event, Math.max(0, blocks.length - 2))
-                      }
-                    />
-                    <Block
-                      node={blocks.at(-1)}
-                      selected={selectedNodeID === blocks.at(-1)?.id}
-                      draggable={false}
-                      onSelect={() =>
-                        setSelectedNodeID(blocks.at(-1)?.id ?? "end")
-                      }
-                    />
-                  </>
-                ) : (
-                  <div className="space-y-3">
-                    {blocks.map((node) => (
-                      <Block
-                        key={node.id}
-                        node={node}
-                        selected={selectedNodeID === node.id}
-                        draggable={false}
-                        onSelect={() => setSelectedNodeID(node.id)}
-                      />
-                    ))}
-                  </div>
-                )}
-                {magnetic && (
-                  <div
-                    onDragOver={(event) => {
-                      if (!editable || !draggingID) return
-                      event.preventDefault()
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault()
-                      if (draggingID) detachNode(draggingID)
-                    }}
-                    className="mt-8 min-h-28 rounded-xl border-2 border-dashed border-muted-foreground/25 bg-muted/20 p-4"
-                  >
-                    <p className="mb-3 text-xs text-muted-foreground">
-                      零散流程块 · 拖到灰色吸附位即可接入流程
-                    </p>
-                    <div className="flex flex-wrap gap-3">
-                      {looseBlocks.map((node) => (
-                        <div key={node.id} className="w-full max-w-md">
-                          <Block
-                            node={node}
-                            selected={selectedNodeID === node.id}
-                            draggable={editable}
-                            onSelect={() => setSelectedNodeID(node.id)}
-                            onDragStart={() => {
-                              setDraggingID(node.id)
-                              setSelectedNodeID(node.id)
-                            }}
-                            onDragEnd={() => {
-                              setDraggingID(null)
-                              setDropIndex(null)
-                            }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="mt-5 flex justify-center">
-                  <Button
-                    disabled={!editable || !magnetic}
-                    onClick={openNodeDialog}
-                  >
-                    <Plus />
-                    新增流程
-                  </Button>
-                </div>
-              </div>
-            </div>
-            {issues.length > 0 && (
-              <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                <ul className="list-disc pl-5">
-                  {issues.map((issue) => (
-                    <li key={issue}>{issue}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-          </CardContent>
-        </Card>
-        <Card className="border-border/70 shadow-none">
-          <CardHeader>
-            <CardTitle>积木属性</CardTitle>
-            <CardDescription>
-              {selectedNode
-                ? `${nodeLabels[selectedNode.type] ?? selectedNode.type} · ${selectedNode.id}`
-                : "请选择积木"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {selectedNode && (
-              <>
-                <div className="space-y-2">
-                  <Label>积木名称</Label>
-                  <Input
-                    disabled={!editable}
-                    value={selectedNode.label}
-                    onChange={(event) =>
-                      updateNode({ label: event.target.value })
-                    }
-                  />
-                </div>
-                {["SET", "GET", "WAIT", "IF"].includes(selectedNode.type) && (
-                  <div className="space-y-2">
-                    <Label>语义变量</Label>
-                    <Select
-                      disabled={!editable}
-                      value={String(selectedNode.config.variable ?? "")}
-                      onValueChange={(variable) => updateNode({}, { variable })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="选择变量" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {variables.map((variable) => (
-                          <SelectItem key={variable.id} value={variable.name}>
-                            {variable.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {["WAIT", "IF"].includes(selectedNode.type) && (
-                  <>
-                    <div className="space-y-2">
-                      <Label>运算符</Label>
-                      <Select
-                        disabled={!editable}
-                        value={String(selectedNode.config.operator ?? "==")}
-                        onValueChange={(operator) =>
-                          updateNode({}, { operator })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {["==", "!=", ">", "<", ">=", "<="].map(
-                            (operator) => (
-                              <SelectItem key={operator} value={operator}>
-                                {operator}
-                              </SelectItem>
-                            )
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>超时秒数</Label>
-                      <Input
-                        disabled={!editable}
-                        type="number"
-                        min="1"
-                        value={String(
-                          selectedNode.config.timeout_seconds ?? 10
-                        )}
-                        onChange={(event) =>
-                          updateNode(
-                            {},
-                            { timeout_seconds: Number(event.target.value) }
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>超时策略</Label>
-                      <Select
-                        disabled={!editable}
-                        value={String(
-                          selectedNode.config.timeout_action ?? "FAIL"
-                        )}
-                        onValueChange={(timeout_action) =>
-                          updateNode({}, { timeout_action })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {[
-                            "FAIL",
-                            "RETRY",
-                            "ALARM",
-                            "JUMP",
-                            "MANUAL_CONFIRM",
-                          ].map((item) => (
-                            <SelectItem key={item} value={item}>
-                              {item}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                )}
-                {selectedNode.type === "SET" && (
-                  <div className="space-y-2">
-                    <Label>写入值</Label>
-                    <Input
-                      disabled={!editable}
-                      value={String(selectedNode.config.value ?? "")}
-                      onChange={(event) =>
-                        updateNode({}, { value: event.target.value })
-                      }
-                    />
-                  </div>
-                )}
-                {selectedNode.type === "LOOP" && (
-                  <div className="space-y-2">
-                    <Label>最大循环次数</Label>
-                    <Input
-                      disabled={!editable}
-                      type="number"
-                      min="1"
-                      value={String(selectedNode.config.max_iterations ?? 3)}
-                      onChange={(event) =>
-                        updateNode(
-                          {},
-                          { max_iterations: Number(event.target.value) }
-                        )
-                      }
-                    />
-                  </div>
-                )}
-                <Separator />
-                <Button
-                  disabled={
-                    !editable || ["START", "END"].includes(selectedNode.type)
-                  }
-                  variant="outline"
-                  onClick={removeNode}
-                >
-                  <Trash2 />
-                  删除积木
-                </Button>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>新增流程</DialogTitle>
-            <DialogDescription>
-              选择流程节点类型。创建后会放入零散流程块区域，再拖到灰色吸附位接入流程。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>积木类型</Label>
-              <Select
-                value={newType}
-                onValueChange={(type) => {
-                  setNewType(type)
-                  setNewLabel(nodeLabels[type])
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {nodeTypes.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {nodeLabels[type]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>积木名称</Label>
-              <Input
-                value={newLabel}
-                onChange={(event) => setNewLabel(event.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              取消
-            </Button>
-            <Button onClick={addNode}>
-              <Plus />
-              创建流程
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
+  if (loading) return <div className="grid min-h-96 place-items-center"><Loader2 className="animate-spin" /></div>
+  return <div className="space-y-6">
+    <div className="flex items-center justify-between"><Button variant="ghost" onClick={() => navigate("/flows")}><ArrowLeft />返回流程清单</Button><div className="flex gap-2"><Button variant="outline" disabled={!editable || saving} onClick={() => void save()}><Save />保存</Button>{flow && editable && <><Button variant="outline" onClick={() => void validate()}><Check />校验</Button><Button onClick={() => void publish()}><Send />发布</Button></>}</div></div>
+    <Card className="border-border/70 shadow-none"><CardHeader><CardTitle>{form.name || "新流程"}{flow && ` · v${flow.version}`}</CardTitle><CardDescription>Blockly 流程编辑器：从左侧工具箱拖入积木，连接点会自动吸附；条件块的“满足”和“否则”分支支持继续嵌套。</CardDescription></CardHeader><CardContent>
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div className="space-y-2"><Label>流程编码</Label><Input disabled={!editable} value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} /></div><div className="space-y-2"><Label>流程名称</Label><Input disabled={!editable} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div><div className="space-y-2"><Label>总超时（秒）</Label><Input disabled={!editable} type="number" min="0" value={form.timeout_seconds} onChange={(event) => setForm({ ...form, timeout_seconds: event.target.value })} /></div><div className="space-y-2"><Label>描述</Label><Input disabled={!editable} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div></div>
+      <div ref={hostRef} className={`blockly-editor ${editable ? "" : "pointer-events-none opacity-75"}`} aria-label="Blockly 流程工作区" />
+      {issues.length > 0 && <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><ul className="list-disc pl-5">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}{error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+    </CardContent></Card>
+  </div>
 }
