@@ -135,6 +135,7 @@ function toolboxDefinition() {
       category("内部变量", nodeColours.VAR_SET, ["VAR_SET"]),
       category("数学运算", nodeColours.CALCULATE, ["CALCULATE"]),
       category("流程动作", nodeColours.DELAY, ["DELAY", "MANUAL_CONFIRM", "ALARM", "SUBFLOW"]),
+      { kind: "category", name: "变量管理", colour: String(nodeColours.VAR_SET), contents: [{ kind: "button", text: "创建内部变量", callbackkey: "CREATE_INTERNAL_VARIABLE" }] },
     ],
   }
 }
@@ -270,6 +271,18 @@ function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDo
   workspace.clear()
   const blocks = new Map<string, Blockly.Block>()
   const ifEdgeIndex = new Map<string, number>()
+  const internalNames = new Set<string>()
+  for (const node of document.nodes) {
+    const config = node.config ?? {}
+    const names = node.type === "VAR_SET" ? [config.variable] : node.type === "CALCULATE" ? [config.target] : node.type === "IF" ? [config.internal_variable] : []
+    for (const name of names) {
+      if (typeof name === "string" && name.trim()) internalNames.add(name.trim())
+    }
+  }
+  const variableMap = workspace.getVariableMap()
+  for (const name of internalNames) {
+    if (!variableMap.getVariable(name)) variableMap.createVariable(name)
+  }
   for (const node of document.nodes) {
     const block = workspace.newBlock(blockTypeForNode(node.type))
     block.data = JSON.stringify(node.config ?? {})
@@ -340,6 +353,7 @@ export function FlowEditorPage() {
     if (!workspaceReady || !referencesReady || !hostRef.current || workspaceRef.current) return
     defineFlowBlocks(); Blockly.setLocale(ZhHans as unknown as Record<string, string>)
     const workspace = Blockly.inject(hostRef.current, { toolbox: toolboxDefinition(), trashcan: true, grid: { spacing: 24, length: 3, colour: "#c6d4ec", snap: true }, zoom: { controls: true, wheel: true, startScale: 1, maxScale: 1.4, minScale: 0.65 }, move: { scrollbars: true, drag: true, wheel: true } })
+    workspace.registerButtonCallback("CREATE_INTERNAL_VARIABLE", () => Blockly.Variables.createVariableButtonHandler(workspace))
     workspaceRef.current = workspace; hydratingRef.current = true; workspaceFromDocument(workspace, documentRef.current); hydratingRef.current = false
     const listener = (event: Blockly.Events.Abstract) => {
       if (hydratingRef.current) return
