@@ -113,6 +113,11 @@ func (r *Router) createWorkOrder(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
 			return
 		}
+		var flow models.FlowDefinition
+		if err := r.db.Where("id = ? AND status = ?", *request.FlowDefinitionID, flowPublished).First(&flow).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "只能安排已发布流程"})
+			return
+		}
 		if request.Code == "" {
 			request.Code = "WO-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		}
@@ -168,6 +173,12 @@ func (r *Router) createWorkOrder(c *gin.Context) {
 			if err := tx.Create(&requestStep).Error; err != nil {
 				return err
 			}
+		}
+		if request.FlowDefinitionID != nil {
+			if err := applyWorkOrderTransition(tx, &order, "release", user); err != nil {
+				return err
+			}
+			return applyWorkOrderTransition(tx, &order, "start", user)
 		}
 		return appendProductionEvent(tx, &order, nil, "created", "", workOrderDraft, 0, 0, "", user)
 	})

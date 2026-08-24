@@ -8,7 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { useTheme } from "@/components/theme-provider"
 import type { User } from "@/lib/api"
 
-const titles: Record<string, [string, string]> = { "/": ["运行总览", "实时掌握生产系统运行状态"], "/work-orders": ["生产工单", "按工序推进生产计划并记录现场结果"], "/variables": ["PLC 变量", "维护语义变量与 PLC 原始地址映射"], "/flows": ["流程定义", "可视化配置、校验和发布通用自动化流程"], "/flow-runs": ["流程运行记录", "查看固定版本的历史执行结果和节点状态"], "/devices": ["设备接入", "监控现场设备与连接状态"], "/plcs": ["PLC 管理", "管理控制器连接与设备数据来源"], "/audit": ["审计日志", "追踪关键系统操作"], "/users": ["用户管理", "维护账号与访问范围"], "/roles": ["角色权限", "配置细粒度访问策略"], "/settings": ["系统设置", "管理保存在数据库中的运行参数"] }
+const titles: Record<string, [string, string]> = { "/": ["运行总览", "实时掌握生产系统运行状态"], "/work-orders": ["生产工单", "新建后自动安排并启动流程"], "/variables": ["PLC 变量", "维护语义变量与 PLC 原始地址映射"], "/flows": ["流程定义", "可视化配置、校验和发布通用自动化流程"], "/monitoring": ["监控项", "按设备安排 PLC 变量采集并查看趋势"], "/dashboards": ["看板列表", "进入现场查看页或看板编辑器"], "/flow-functions": ["流程函数", "维护全局函数及其积木实现"], "/devices": ["设备接入", "监控现场设备与连接状态"], "/plcs": ["PLC 管理", "管理控制器连接与设备数据来源"], "/audit": ["审计日志", "追踪关键系统操作"], "/users": ["用户管理", "维护账号与访问范围"], "/roles": ["角色权限", "配置细粒度访问策略"], "/settings": ["系统设置", "管理保存在数据库中的运行参数"] }
 
 export function ConsoleLayout({ user, onLogout, systemName, visibleItems }: { user: User; onLogout: () => void; systemName: string; visibleItems?: string[] }) {
   const { theme, setTheme } = useTheme(); const location = useLocation(); const [title, description] = titles[location.pathname] ?? (location.pathname.startsWith("/flows/") ? ["流程编辑器", "独立流程编辑页面，配置节点、变量、连线和执行策略"] : titles["/"])

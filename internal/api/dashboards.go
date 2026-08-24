@@ -10,12 +10,14 @@ import (
 )
 
 type dashboardRequest struct {
-	Name           string                   `json:"name" binding:"required,max=128"`
-	Description    string                   `json:"description"`
-	TimeRangeHours int                      `json:"time_range_hours"`
-	StatusRunning  string                   `json:"status_running"`
-	StatusIdle     string                   `json:"status_idle"`
-	Widgets        []dashboardWidgetRequest `json:"widgets"`
+	Name            string                   `json:"name" binding:"required,max=128"`
+	Description     string                   `json:"description"`
+	TimeRangeHours  int                      `json:"time_range_hours"`
+	StatusRunning   string                   `json:"status_running"`
+	StatusIdle      string                   `json:"status_idle"`
+	BackgroundColor string                   `json:"background_color"`
+	Definition      any                      `json:"definition"`
+	Widgets         []dashboardWidgetRequest `json:"widgets"`
 }
 type dashboardWidgetRequest struct {
 	ID         uint   `json:"id"`
@@ -50,7 +52,8 @@ func (r *Router) createDashboard(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	item := models.Dashboard{Name: strings.TrimSpace(req.Name), Description: req.Description, TimeRangeHours: maxPositive(req.TimeRangeHours, 24), StatusRunning: req.StatusRunning, StatusIdle: req.StatusIdle}
+	definition, _ := json.Marshal(req.Definition)
+	item := models.Dashboard{Name: strings.TrimSpace(req.Name), Description: req.Description, TimeRangeHours: maxPositive(req.TimeRangeHours, 24), StatusRunning: req.StatusRunning, StatusIdle: req.StatusIdle, BackgroundColor: req.BackgroundColor, Definition: string(definition)}
 	if err := r.saveDashboard(&item, req.Widgets); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -73,6 +76,9 @@ func (r *Router) updateDashboard(c *gin.Context) {
 	item.TimeRangeHours = maxPositive(req.TimeRangeHours, 24)
 	item.StatusRunning = req.StatusRunning
 	item.StatusIdle = req.StatusIdle
+	item.BackgroundColor = req.BackgroundColor
+	definition, _ := json.Marshal(req.Definition)
+	item.Definition = string(definition)
 	if err := r.saveDashboard(&item, req.Widgets); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

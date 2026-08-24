@@ -16,6 +16,7 @@ type monitorItemRequest struct {
 	Name            string `json:"name" binding:"required,max=128"`
 	PLCID           uint   `json:"plc_id" binding:"required"`
 	VariableID      uint   `json:"variable_id" binding:"required"`
+	DeviceID        *uint  `json:"device_id"`
 	IntervalSeconds int    `json:"interval_seconds"`
 	RetentionDays   int    `json:"retention_days"`
 	Enabled         *bool  `json:"enabled"`
@@ -23,7 +24,7 @@ type monitorItemRequest struct {
 
 func (r *Router) monitorItems(c *gin.Context) {
 	var items []models.MonitorItem
-	query := r.db.Preload("PLC").Preload("Variable").Order("id DESC")
+	query := r.db.Preload("PLC").Preload("Variable").Preload("Device").Order("id DESC")
 	if err := query.Find(&items).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -48,13 +49,20 @@ func (r *Router) createMonitorItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "变量不存在或不属于所选 PLC"})
 		return
 	}
-	item := models.MonitorItem{Name: strings.TrimSpace(req.Name), PLCID: req.PLCID, VariableID: req.VariableID, IntervalSeconds: req.IntervalSeconds, RetentionDays: req.RetentionDays, Enabled: boolValue(req.Enabled, true)}
+	if req.DeviceID != nil {
+		var device models.Device
+		if err := r.db.First(&device, *req.DeviceID).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "设备不存在"})
+			return
+		}
+	}
+	item := models.MonitorItem{Name: strings.TrimSpace(req.Name), PLCID: req.PLCID, VariableID: req.VariableID, DeviceID: req.DeviceID, IntervalSeconds: req.IntervalSeconds, RetentionDays: req.RetentionDays, Enabled: boolValue(req.Enabled, true)}
 	if err := r.db.Create(&item).Error; err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
 	r.recordEvent(auth.CurrentUser(c), "create", "monitor_item", "创建监控项 "+item.Name, c)
-	r.db.Preload("PLC").Preload("Variable").First(&item, item.ID)
+	r.db.Preload("PLC").Preload("Variable").Preload("Device").First(&item, item.ID)
 	c.JSON(http.StatusCreated, gin.H{"item": item})
 }
 
@@ -80,11 +88,18 @@ func (r *Router) updateMonitorItem(c *gin.Context) {
 	if req.RetentionDays < 1 {
 		req.RetentionDays = item.RetentionDays
 	}
-	if err := r.db.Model(&item).Updates(map[string]any{"name": strings.TrimSpace(req.Name), "plc_id": req.PLCID, "variable_id": req.VariableID, "interval_seconds": req.IntervalSeconds, "retention_days": req.RetentionDays, "enabled": boolValue(req.Enabled, item.Enabled)}).Error; err != nil {
+	if req.DeviceID != nil {
+		var device models.Device
+		if err := r.db.First(&device, *req.DeviceID).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "设备不存在"})
+			return
+		}
+	}
+	if err := r.db.Model(&item).Updates(map[string]any{"name": strings.TrimSpace(req.Name), "plc_id": req.PLCID, "variable_id": req.VariableID, "device_id": req.DeviceID, "interval_seconds": req.IntervalSeconds, "retention_days": req.RetentionDays, "enabled": boolValue(req.Enabled, item.Enabled)}).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	r.db.Preload("PLC").Preload("Variable").First(&item, id)
+	r.db.Preload("PLC").Preload("Variable").Preload("Device").First(&item, id)
 	c.JSON(http.StatusOK, gin.H{"item": item})
 }
 

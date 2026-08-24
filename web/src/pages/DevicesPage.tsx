@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { Activity, Loader2, Pencil, Plus, Trash2, Wrench } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { api, type Device, type PLC } from "@/lib/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { TableColumnMenu } from "@/components/table-column-menu"
@@ -52,6 +53,7 @@ const emptyForm: FormState = {
 }
 
 export function DevicesPage() {
+  const navigate = useNavigate()
   const [devices, setDevices] = useState<Device[]>([])
   const [plcs, setPLCs] = useState<PLC[]>([])
   const [page, setPage] = useState<Page>({
@@ -238,6 +240,14 @@ export function DevicesPage() {
                             : "离线"}
                       </td>
                       <td className="py-4 text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="安排监控项"
+                          onClick={() => navigate(`/monitoring?device=${device.id}`)}
+                        >
+                          <Activity />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="icon-sm"

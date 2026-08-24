@@ -256,6 +256,8 @@ type MonitorItem struct {
 	PLC             *PLC         `json:"plc,omitempty"`
 	VariableID      uint         `json:"variable_id" gorm:"index;not null"`
 	Variable        *PLCVariable `json:"variable,omitempty"`
+	DeviceID        *uint        `json:"device_id" gorm:"index"`
+	Device          *Device      `json:"device,omitempty"`
 	IntervalSeconds int          `json:"interval_seconds" gorm:"not null;default:10"`
 	RetentionDays   int          `json:"retention_days" gorm:"not null;default:30"`
 	Enabled         bool         `json:"enabled" gorm:"default:true"`
@@ -273,15 +275,17 @@ type MonitorRecord struct {
 }
 
 type Dashboard struct {
-	ID             uint              `json:"id" gorm:"primaryKey"`
-	Name           string            `json:"name" gorm:"size:128;not null"`
-	Description    string            `json:"description" gorm:"type:text"`
-	TimeRangeHours int               `json:"time_range_hours" gorm:"not null;default:24"`
-	StatusRunning  string            `json:"status_running" gorm:"size:255"`
-	StatusIdle     string            `json:"status_idle" gorm:"size:255"`
-	Widgets        []DashboardWidget `json:"widgets,omitempty" gorm:"foreignKey:DashboardID;constraint:OnDelete:CASCADE"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
+	ID              uint              `json:"id" gorm:"primaryKey"`
+	Name            string            `json:"name" gorm:"size:128;not null"`
+	Description     string            `json:"description" gorm:"type:text"`
+	TimeRangeHours  int               `json:"time_range_hours" gorm:"not null;default:24"`
+	StatusRunning   string            `json:"status_running" gorm:"size:255"`
+	StatusIdle      string            `json:"status_idle" gorm:"size:255"`
+	BackgroundColor string            `json:"background_color" gorm:"size:32"`
+	Definition      string            `json:"definition" gorm:"type:text"`
+	Widgets         []DashboardWidget `json:"widgets,omitempty" gorm:"foreignKey:DashboardID;constraint:OnDelete:CASCADE"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 type DashboardWidget struct {

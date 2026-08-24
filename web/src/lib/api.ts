@@ -17,10 +17,10 @@ export type FlowDocument = { nodes: FlowNode[]; edges: FlowEdge[]; variables?: {
 export type FlowDefinition = { id: number; code: string; name: string; description: string; version: number; status: "draft" | "published"; definition: string; timeout_seconds: number; created_at: string; updated_at: string }
 export type FlowRun = { id: number; flow_definition_id: number; flow_definition?: FlowDefinition; flow_version: number; status: "created" | "running" | "paused" | "completed" | "failed" | "cancelled" | "timeout" | "manual_confirm"; current_node_id: string; started_at?: string; ended_at?: string; error_message?: string; node_runs?: { id: number; node_id: string; node_type: string; status: string; started_at?: string; ended_at?: string; error_message?: string }[] }
 export type AuditLog = { id: number; username: string; action: string; resource: string; detail: string; method?: string; path?: string; status_code?: number; ip?: string; created_at: string }
-export type MonitorItem = { id: number; name: string; plc_id: number; plc?: PLC; variable_id: number; variable?: PLCVariable; interval_seconds: number; retention_days: number; enabled: boolean; last_sampled_at?: string }
+export type MonitorItem = { id: number; name: string; plc_id: number; plc?: PLC; variable_id: number; variable?: PLCVariable; device_id?: number; device?: Device; interval_seconds: number; retention_days: number; enabled: boolean; last_sampled_at?: string }
 export type MonitorRecord = { id: number; monitor_item_id: number; value: string; quality: string; recorded_at: string }
 export type DashboardWidget = { id?: number; dashboard_id?: number; widget_type: "text" | "image" | "status" | "variable" | "chart"; title: string; x: number; y: number; width: number; height: number; config: string | Record<string, unknown> }
-export type Dashboard = { id: number; name: string; description: string; time_range_hours: number; status_running?: string; status_idle?: string; widgets?: DashboardWidget[] }
+export type Dashboard = { id: number; name: string; description: string; time_range_hours: number; status_running?: string; status_idle?: string; background_color?: string; definition?: string; widgets?: DashboardWidget[] }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem("tsumugi-token")
