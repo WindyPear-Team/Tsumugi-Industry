@@ -105,7 +105,7 @@ func (r *Router) saveDashboard(item *models.Dashboard, widgets []dashboardWidget
 		}
 		keptIDs := make([]uint, 0, len(widgets))
 		for _, widget := range widgets {
-			config, err := json.Marshal(widget.Config)
+			config, err := marshalDashboardWidgetConfig(widget.Config)
 			if err != nil {
 				return err
 			}
@@ -135,6 +135,35 @@ func (r *Router) saveDashboard(item *models.Dashboard, widgets []dashboardWidget
 		return tx.Where("dashboard_id = ? AND id NOT IN ?", item.ID, keptIDs).Delete(&models.DashboardWidget{}).Error
 	})
 }
+
+// marshalDashboardWidgetConfig keeps widget config as a JSON object even when
+// it came back through the API as an already-encoded string. This prevents
+// repeated saves from nesting the JSON and making text values unreadable.
+func marshalDashboardWidgetConfig(value any) ([]byte, error) {
+	if value == nil {
+		return []byte("{}"), nil
+	}
+	for depth := 0; depth < 3; depth++ {
+		raw, ok := value.(string)
+		if !ok {
+			break
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return []byte("{}"), nil
+		}
+		var decoded any
+		if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+			break
+		}
+		value = decoded
+		if value == nil {
+			return []byte("{}"), nil
+		}
+	}
+	return json.Marshal(value)
+}
+
 func maxPositive(value, fallback int) int {
 	if value < 1 {
 		return fallback
