@@ -754,28 +754,46 @@ func (r *Router) executeFlowNode(runID uint, node flowNode, internalVariables ma
 		if name == "" {
 			return errors.New("内部变量赋值节点未配置变量名")
 		}
-		internalVariables[name] = resolveInternalOperand(config["value"], internalVariables)
+		value, err := r.resolveFlowOperand(config["value"], internalVariables)
+		if err != nil {
+			return err
+		}
+		internalVariables[name] = value
 		return nil
 	case "CALCULATE":
 		target := strings.TrimSpace(stringValue(config, "target", ""))
 		if target == "" {
 			return errors.New("数学计算节点未配置结果变量")
 		}
-		left, lok := internalNumber(resolveInternalOperand(config["left"], internalVariables))
-		right, rok := internalNumber(resolveInternalOperand(config["right"], internalVariables))
+		leftValue, err := r.resolveFlowOperand(config["left"], internalVariables)
+		if err != nil {
+			return err
+		}
+		rightValue, err := r.resolveFlowOperand(config["right"], internalVariables)
+		if err != nil {
+			return err
+		}
+		left, lok := internalNumber(leftValue)
+		right, rok := internalNumber(rightValue)
 		if !lok || !rok {
 			return errors.New("数学计算节点的操作数必须是数字或已赋值内部变量")
 		}
 		operator := stringValue(config, "operator", "+")
 		var result float64
 		switch operator {
-		case "+": result = left + right
-		case "-": result = left - right
-		case "*": result = left * right
+		case "+":
+			result = left + right
+		case "-":
+			result = left - right
+		case "*":
+			result = left * right
 		case "/":
-			if right == 0 { return errors.New("数学计算不能除以零") }
+			if right == 0 {
+				return errors.New("数学计算不能除以零")
+			}
 			result = left / right
-		default: return fmt.Errorf("不支持的数学运算符：%s", operator)
+		default:
+			return fmt.Errorf("不支持的数学运算符：%s", operator)
 		}
 		internalVariables[target] = result
 		return nil
@@ -964,40 +982,72 @@ func stringValue(config map[string]any, key, fallback string) string {
 	return value
 }
 
-func resolveInternalOperand(value any, variables map[string]any) any {
+func (r *Router) resolveFlowOperand(value any, variables map[string]any) (any, error) {
 	if expression, ok := value.(map[string]any); ok {
 		switch expression["kind"] {
 		case "internal":
-			return variables[stringValue(expression, "name", "")]
-		case "math":
-			left, lok := internalNumber(resolveInternalOperand(expression["left"], variables))
-			right, rok := internalNumber(resolveInternalOperand(expression["right"], variables))
-			if !lok || !rok { return nil }
-			switch stringValue(expression, "operator", "+") {
-			case "+": return left + right
-			case "-": return left - right
-			case "*": return left * right
-			case "/":
-				if right != 0 { return left / right }
+			return variables[stringValue(expression, "name", "")], nil
+		case "plc_variable":
+			name := stringValue(expression, "name", "")
+			if name == "" {
+				return nil, errors.New("PLC 变量值块未配置变量")
 			}
-			return nil
+			current, quality, err := r.readSemanticVariable(name)
+			if err != nil {
+				return nil, err
+			}
+			if quality != "good" {
+				return nil, fmt.Errorf("变量 %s 数据质量为 %s，不能用于计算", name, quality)
+			}
+			return current, nil
+		case "math":
+			leftValue, err := r.resolveFlowOperand(expression["left"], variables)
+			if err != nil {
+				return nil, err
+			}
+			rightValue, err := r.resolveFlowOperand(expression["right"], variables)
+			if err != nil {
+				return nil, err
+			}
+			left, lok := internalNumber(leftValue)
+			right, rok := internalNumber(rightValue)
+			if !lok || !rok {
+				return nil, nil
+			}
+			switch stringValue(expression, "operator", "+") {
+			case "+":
+				return left + right, nil
+			case "-":
+				return left - right, nil
+			case "*":
+				return left * right, nil
+			case "/":
+				if right != 0 {
+					return left / right, nil
+				}
+			}
+			return nil, nil
 		}
 	}
 	if name, ok := value.(string); ok {
 		trimmed := strings.TrimSpace(name)
 		if current, exists := variables[trimmed]; exists {
-			return current
+			return current, nil
 		}
 		if strings.HasPrefix(trimmed, "$") {
-			return variables[strings.TrimPrefix(trimmed, "$")]
+			return variables[strings.TrimPrefix(trimmed, "$")], nil
 		}
 		if parsed, err := strconv.ParseFloat(trimmed, 64); err == nil {
-			return parsed
+			return parsed, nil
 		}
-		if strings.EqualFold(trimmed, "true") { return true }
-		if strings.EqualFold(trimmed, "false") { return false }
+		if strings.EqualFold(trimmed, "true") {
+			return true, nil
+		}
+		if strings.EqualFold(trimmed, "false") {
+			return false, nil
+		}
 	}
-	return value
+	return value, nil
 }
 
 func internalNumber(value any) (float64, bool) {

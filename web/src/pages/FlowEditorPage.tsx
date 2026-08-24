@@ -62,6 +62,7 @@ function defineFlowBlocks() {
     flow_start: { init(this: Blockly.Block) { this.appendDummyInput().appendField("开始"); this.setNextStatement(true); this.setColour(nodeColours.START); this.setTooltip("流程开始") } },
     flow_end: { init(this: Blockly.Block) { this.appendDummyInput().appendField("结束"); this.setPreviousStatement(true); this.setColour(nodeColours.END); this.setTooltip("流程结束") } },
     flow_var_get: { init(this: Blockly.Block) { this.appendDummyInput().appendField("内部变量").appendField(new Blockly.FieldVariable("counter"), "VARIABLE"); this.setOutput(true); this.setColour(nodeColours.VAR_SET); this.setTooltip("读取内部变量，可插入计算或赋值输入") } },
+    flow_plc_get: { init(this: Blockly.Block) { this.appendDummyInput().appendField("PLC变量").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE"); this.setOutput(true); this.setColour(nodeColours.GET); this.setTooltip("读取 PLC 语义变量，可插入计算或内部变量赋值") } },
     flow_math: { init(this: Blockly.Block) { this.appendValueInput("LEFT").appendField("计算"); this.appendDummyInput().appendField(new Blockly.FieldDropdown([["+", "+"], ["−", "-"], ["×", "*"], ["÷", "/"]]), "OP"); this.appendValueInput("RIGHT"); this.setOutput(true); this.setColour(nodeColours.CALCULATE); this.setTooltip("可嵌套变量、数字和其他数学计算") } },
     flow_if: { init(this: Blockly.Block) {
       this.appendDummyInput().appendField("如果").appendField(new Blockly.FieldDropdown([["PLC变量", "plc"], ["内部变量", "internal"]]), "SOURCE").appendField("PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField("内部").appendField(new Blockly.FieldVariable("counter"), "INTERNAL_VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
@@ -137,7 +138,7 @@ function toolboxDefinition() {
     kind: "categoryToolbox",
     contents: [
       { kind: "category", name: "流程控制", colour: String(nodeColours.START), contents: ["START", "END", "IF", "SWITCH", "LOOP", "PARALLEL"].map((type) => ({ kind: "block", type: blockTypeForNode(type) })) },
-      category("PLC 操作", nodeColours.SET, ["SET", "GET", "WAIT"]),
+      { kind: "category", name: "PLC 操作", colour: String(nodeColours.SET), contents: [{ kind: "block", type: "flow_set" }, { kind: "block", type: "flow_get" }, { kind: "block", type: "flow_wait" }, { kind: "block", type: "flow_plc_get" }] },
       { kind: "category", name: "内部变量", colour: String(nodeColours.VAR_SET), contents: [{ kind: "block", type: "flow_var_set" }, { kind: "block", type: "flow_var_get" }] },
       { kind: "category", name: "数学运算", colour: String(nodeColours.CALCULATE), contents: [{ kind: "block", type: "flow_math" }, { kind: "block", type: "math_number" }] },
       category("流程动作", nodeColours.DELAY, ["DELAY", "MANUAL_CONFIRM", "ALARM", "SUBFLOW"]),
@@ -166,6 +167,7 @@ function parseFieldValue(value: string | null): unknown {
 function expressionFromBlock(block?: Blockly.Block | null): unknown {
   if (!block) return undefined
   if (block.type === "flow_var_get") return { kind: "internal", name: block.getFieldValue("VARIABLE") }
+  if (block.type === "flow_plc_get") return { kind: "plc_variable", plc_id: Number(block.getFieldValue("PLC_ID") ?? 0), name: block.getFieldValue("VARIABLE") }
   if (block.type === "flow_math") {
     return {
       kind: "math",
@@ -318,6 +320,11 @@ function hydrateExpression(workspace: Blockly.WorkspaceSvg, input: Blockly.Input
       const variableBlock = workspace.newBlock("flow_var_get")
       variableBlock.initSvg(); variableBlock.render(); variableBlock.setFieldValue(String(object.name ?? "counter"), "VARIABLE")
       return variableBlock
+    }
+    if (object.kind === "plc_variable") {
+      const plcBlock = workspace.newBlock("flow_plc_get")
+      plcBlock.initSvg(); plcBlock.render(); plcBlock.setFieldValue(String(object.plc_id ?? ""), "PLC_ID"); plcBlock.setFieldValue(String(object.name ?? ""), "VARIABLE")
+      return plcBlock
     }
     if (object.kind === "math") {
       const mathBlock = workspace.newBlock("flow_math")
