@@ -78,8 +78,9 @@ const (
 )
 
 type ReadRequest struct {
-	Address string
-	Length  int
+	Address  string
+	Length   int
+	DataType string
 }
 
 type Value struct {
@@ -90,8 +91,9 @@ type Value struct {
 }
 
 type WriteRequest struct {
-	Address string
-	Value   any
+	Address  string
+	DataType string
+	Value    any
 }
 
 var ErrNotImplemented = errors.New("PLC protocol operation is not implemented")

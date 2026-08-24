@@ -171,7 +171,7 @@ func (r *Router) readVariable(c *gin.Context) {
 		return
 	}
 	defer adapter.Close(context.Background())
-	values, err := adapter.Read(c.Request.Context(), []plc.ReadRequest{{Address: item.Address, Length: variableReadLength(item.DataType)}})
+	values, err := adapter.Read(c.Request.Context(), []plc.ReadRequest{{Address: item.Address, Length: variableReadLength(item.DataType), DataType: item.DataType}})
 	if err != nil || len(values) == 0 {
 		markVariableOffline(r.db, &item)
 		if err == nil {
@@ -233,7 +233,7 @@ func (r *Router) writeVariable(c *gin.Context) {
 		return
 	}
 	defer adapter.Close(context.Background())
-	if err := adapter.Write(c.Request.Context(), []plc.WriteRequest{{Address: item.Address, Value: payload.Value}}); err != nil {
+	if err := adapter.Write(c.Request.Context(), []plc.WriteRequest{{Address: item.Address, DataType: item.DataType, Value: payload.Value}}); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}

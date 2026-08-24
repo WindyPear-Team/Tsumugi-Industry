@@ -925,7 +925,7 @@ func (r *Router) writeSemanticVariable(name string, value any) error {
 		return err
 	}
 	defer adapter.Close(context.Background())
-	if err := adapter.Write(context.Background(), []plc.WriteRequest{{Address: item.Address, Value: value}}); err != nil {
+	if err := adapter.Write(context.Background(), []plc.WriteRequest{{Address: item.Address, DataType: item.DataType, Value: value}}); err != nil {
 		return fmt.Errorf("写入变量 %s 失败：%w", name, err)
 	}
 	encoded, _ := json.Marshal(value)
