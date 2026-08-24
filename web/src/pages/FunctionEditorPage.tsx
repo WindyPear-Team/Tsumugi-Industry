@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import * as Blockly from "blockly"
 import * as ZhHans from "blockly/msg/zh-hans"
-import { ArrowLeft, Check, GripVertical, Plus, Trash2 } from "lucide-react"
+import { ArrowLeft, Check, GripVertical } from "lucide-react"
 import { useNavigate, useParams } from "react-router-dom"
 import { api, type FlowFunction, type FlowParameter } from "@/lib/api"
 import { defineFunctionBlocks, functionToolbox, syncFunctionParameters } from "@/lib/function-blocks"
@@ -26,6 +26,7 @@ export function FunctionEditorPage() {
   const navigate = useNavigate()
   const [form, setForm] = useState<Form>(empty)
   const [parameters, setParameters] = useState<FlowParameter[]>([])
+  const [draggedParameter, setDraggedParameter] = useState<number | null>(null)
   const [definition, setDefinition] = useState<unknown>(null)
   const [error, setError] = useState("")
   const hostRef = useRef<HTMLDivElement>(null)
@@ -55,6 +56,7 @@ export function FunctionEditorPage() {
   function addParameter(type: FlowParameter["type"]) { setParameters((current) => [...current, newParameter(type, current.length + 1)]) }
   function updateParameter(index: number, update: Partial<FlowParameter>) { setParameters((current) => current.map((parameter, parameterIndex) => parameterIndex === index ? { ...parameter, ...update } : parameter)) }
   function removeParameter(index: number) { setParameters((current) => current.filter((_, parameterIndex) => parameterIndex !== index)) }
+  function moveParameter(from: number, to: number) { if (from === to) return; setParameters((current) => { const next = [...current]; const [item] = next.splice(from, 1); next.splice(to, 0, item); return next }) }
   async function save(event: FormEvent) {
     event.preventDefault()
     try {
@@ -77,28 +79,18 @@ export function FunctionEditorPage() {
             <div className="space-y-2"><Label>说明</Label><Input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div>
           </div>
           <div className="rounded-3xl bg-violet-600 p-5 text-white shadow-lg">
-            <div className="flex min-h-20 flex-wrap items-center gap-3 rounded-r-full border-b-4 border-violet-800 bg-violet-600 px-5 py-4">
-              <span className="text-2xl font-semibold">{form.name || "文本"}</span>
-              {parameters.map((parameter, index) => parameter.type === "label" ? <span className="rounded-md bg-violet-700 px-3 py-2 text-lg" key={index}>{parameter.default_value || parameter.name}</span> : parameter.type === "select" ? <span className="rounded-md bg-violet-700 px-3 py-2 text-lg" key={index}>{parameter.options?.[0] || parameter.name}⌄</span> : parameter.type === "boolean" ? <span className="rounded-full bg-violet-700 px-4 py-2 text-lg" key={index}>{parameter.name}</span> : <span className="rounded-full bg-violet-700 px-4 py-2 text-lg" key={index}>{parameter.name}</span>)}
+            <div className="flex min-h-24 flex-wrap items-center gap-3 rounded-r-full border-b-4 border-violet-800 bg-violet-600 px-5 py-4">
+              <Input className="h-11 w-40 border-violet-300 bg-violet-700 text-xl font-semibold text-white placeholder:text-violet-200" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="积木名称" />
+              {parameters.map((parameter, index) => <div draggable key={parameter.name + "-" + index} onDragStart={() => setDraggedParameter(index)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedParameter !== null) moveParameter(draggedParameter, index); setDraggedParameter(null) }} className="flex cursor-grab items-center gap-1 rounded-xl border border-violet-300 bg-violet-700 p-1 shadow-sm active:cursor-grabbing">
+                <GripVertical className="size-4 shrink-0 text-violet-200" /><select className="h-8 max-w-24 rounded-md border border-violet-300 bg-violet-600 px-1 text-xs text-white" value={parameter.type} onChange={(event) => updateParameter(index, { type: event.target.value as FlowParameter["type"] })}><option value="label">文本</option><option value="string">字符</option><option value="number">数字</option><option value="boolean">布尔</option><option value="select">下拉</option><option value="device">设备</option></select>
+                {parameter.type === "label" ? <><Input className="h-8 w-28 border-violet-300 bg-violet-600 text-white" value={parameter.default_value ?? ""} onChange={(event) => updateParameter(index, { default_value: event.target.value })} placeholder="说明文本" /><Input className="h-8 w-24 border-violet-300 bg-violet-600 text-xs text-white" value={parameter.name} onChange={(event) => updateParameter(index, { name: event.target.value })} placeholder="参数名" /></> : <><Input className="h-8 w-24 border-violet-300 bg-violet-600 text-xs text-white" value={parameter.name} onChange={(event) => updateParameter(index, { name: event.target.value })} placeholder="参数名" />{parameter.type === "select" || parameter.type === "device" ? <><select className="h-8 max-w-28 rounded-md border border-violet-300 bg-violet-600 px-2 text-sm text-white" value={parameter.options?.[0] ?? ""} onChange={(event) => updateParameter(index, { options: [event.target.value, ...(parameter.options ?? []).filter((option) => option !== event.target.value)] })}>{(parameter.options?.length ? parameter.options : ["选项"]).map((option) => <option value={option} key={option}>{option}</option>)}</select><Input className="h-8 w-24 border-violet-300 bg-violet-600 text-xs text-white" value={(parameter.options ?? []).join(", ")} onChange={(event) => updateParameter(index, { options: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="下拉项" /></> : <Input className="h-8 w-24 border-violet-300 bg-violet-600 text-white" value={parameter.default_value ?? ""} onChange={(event) => updateParameter(index, { default_value: event.target.value })} placeholder={parameter.type === "boolean" ? "真/假" : parameter.type === "number" ? "数字" : "文本"} />}</>}
+                <button type="button" className="px-1 text-violet-100 hover:text-white" onClick={() => removeParameter(index)} aria-label="删除参数">×</button>
+              </div>)}
             </div>
-            <p className="mt-3 text-sm text-violet-100">积木预览 · 调用时会显示真实参数名称</p>
+            <p className="mt-3 text-sm text-violet-100">直接在上方编辑参数；拖动参数胶囊可调整顺序。</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {parameterTypes.map((item) => <button type="button" className="rounded-2xl border bg-background p-5 text-left shadow-sm transition hover:border-primary hover:bg-primary/5" onClick={() => addParameter(item.type)} key={item.type}><div className="mb-3 flex items-center justify-between text-2xl text-muted-foreground"><span>＋</span><span>{item.symbol}</span></div><p className="font-medium">{item.label}</p><p className="mt-1 text-xs text-muted-foreground">{item.description}</p></button>)}
-          </div>
-          <div className="rounded-xl border bg-muted/20 p-4">
-            <div className="mb-3 flex items-center justify-between"><div><p className="font-medium">参数列表</p><p className="text-xs text-muted-foreground">参数顺序就是调用积木中的显示顺序。</p></div><Button type="button" variant="outline" onClick={() => addParameter("string")}><Plus />添加文本参数</Button></div>
-            <div className="space-y-3">
-              {parameters.map((parameter, index) => <div className="rounded-lg border bg-background p-3" key={parameter.name + "-" + index}>
-                <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground"><GripVertical className="size-4" />参数 {index + 1}<Button type="button" variant="ghost" size="icon-sm" className="ml-auto text-destructive" onClick={() => removeParameter(index)}><Trash2 /></Button></div>
-                <div className="grid gap-3 md:grid-cols-[1fr_150px_1fr]">
-                  <div className="space-y-1"><Label className="text-xs">参数名称</Label><Input value={parameter.name} onChange={(event) => updateParameter(index, { name: event.target.value })} /></div>
-                  <div className="space-y-1"><Label className="text-xs">参数类型</Label><select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={parameter.type} onChange={(event) => updateParameter(index, { type: event.target.value as FlowParameter["type"] })}><option value="label">说明文本</option><option value="string">数字字符</option><option value="number">数字</option><option value="boolean">布尔值</option><option value="select">下拉菜单</option><option value="device">设备下拉</option></select></div>
-                  <div className="space-y-1"><Label className="text-xs">{parameter.type === "select" || parameter.type === "device" ? "下拉项名称（逗号分隔）" : parameter.type === "label" ? "显示文本" : "默认值"}</Label><Input value={parameter.type === "select" || parameter.type === "device" ? (parameter.options ?? []).join(", ") : parameter.default_value ?? ""} onChange={(event) => updateParameter(index, parameter.type === "select" || parameter.type === "device" ? { options: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) } : { default_value: event.target.value })} /></div>
-                </div>
-              </div>)}
-              {parameters.length === 0 && <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">暂无参数，点击下方类型卡片开始定义</div>}
-            </div>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </CardContent>
