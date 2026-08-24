@@ -127,26 +127,29 @@ type Backup struct {
 // WorkOrder is the executable production plan. Its status is changed only by
 // workflow endpoints so operators cannot accidentally skip a process step.
 type WorkOrder struct {
-	ID              uint              `json:"id" gorm:"primaryKey"`
-	Code            string            `json:"code" gorm:"size:64;uniqueIndex;not null"`
-	ProductCode     string            `json:"product_code" gorm:"size:64;index;not null"`
-	ProductName     string            `json:"product_name" gorm:"size:128;not null"`
-	PlannedQty      int               `json:"planned_qty" gorm:"not null"`
-	CompletedQty    int               `json:"completed_qty" gorm:"not null;default:0"`
-	FailedQty       int               `json:"failed_qty" gorm:"not null;default:0"`
-	Status          string            `json:"status" gorm:"size:32;index;not null;default:draft"`
-	Priority        string            `json:"priority" gorm:"size:16;index;not null;default:normal"`
-	CurrentSequence int               `json:"current_sequence" gorm:"not null;default:0"`
-	ScheduledStart  *time.Time        `json:"scheduled_start"`
-	ScheduledEnd    *time.Time        `json:"scheduled_end"`
-	Notes           string            `json:"notes" gorm:"type:text"`
-	Version         int               `json:"version" gorm:"not null;default:1"`
-	CreatedByID     *uint             `json:"created_by_id" gorm:"index"`
-	CreatedBy       *User             `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
-	Steps           []WorkOrderStep   `json:"steps,omitempty" gorm:"foreignKey:WorkOrderID;constraint:OnDelete:CASCADE"`
-	Events          []ProductionEvent `json:"events,omitempty" gorm:"foreignKey:WorkOrderID;constraint:OnDelete:CASCADE"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	ID               uint              `json:"id" gorm:"primaryKey"`
+	Code             string            `json:"code" gorm:"size:64;uniqueIndex;not null"`
+	ProductCode      string            `json:"product_code" gorm:"size:64;index;not null"`
+	ProductName      string            `json:"product_name" gorm:"size:128;not null"`
+	PlannedQty       int               `json:"planned_qty" gorm:"not null"`
+	CompletedQty     int               `json:"completed_qty" gorm:"not null;default:0"`
+	FailedQty        int               `json:"failed_qty" gorm:"not null;default:0"`
+	Status           string            `json:"status" gorm:"size:32;index;not null;default:draft"`
+	Priority         string            `json:"priority" gorm:"size:16;index;not null;default:normal"`
+	CurrentSequence  int               `json:"current_sequence" gorm:"not null;default:0"`
+	ScheduledStart   *time.Time        `json:"scheduled_start"`
+	ScheduledEnd     *time.Time        `json:"scheduled_end"`
+	Notes            string            `json:"notes" gorm:"type:text"`
+	Version          int               `json:"version" gorm:"not null;default:1"`
+	FlowDefinitionID *uint             `json:"flow_definition_id" gorm:"index"`
+	FlowDefinition   *FlowDefinition   `json:"flow_definition,omitempty" gorm:"foreignKey:FlowDefinitionID"`
+	FlowVariables    string            `json:"flow_variables" gorm:"type:text"`
+	CreatedByID      *uint             `json:"created_by_id" gorm:"index"`
+	CreatedBy        *User             `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
+	Steps            []WorkOrderStep   `json:"steps,omitempty" gorm:"foreignKey:WorkOrderID;constraint:OnDelete:CASCADE"`
+	Events           []ProductionEvent `json:"events,omitempty" gorm:"foreignKey:WorkOrderID;constraint:OnDelete:CASCADE"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 type WorkOrderStep struct {
@@ -230,6 +233,57 @@ type FlowDefinition struct {
 	UpdatedByID    *uint     `json:"updated_by_id" gorm:"index"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// MonitorItem describes a PLC variable sampling plan. Samples are kept
+// separately so charts can be queried without changing the semantic variable.
+type MonitorItem struct {
+	ID              uint         `json:"id" gorm:"primaryKey"`
+	Name            string       `json:"name" gorm:"size:128;not null"`
+	PLCID           uint         `json:"plc_id" gorm:"index;not null"`
+	PLC             *PLC         `json:"plc,omitempty"`
+	VariableID      uint         `json:"variable_id" gorm:"index;not null"`
+	Variable        *PLCVariable `json:"variable,omitempty"`
+	IntervalSeconds int          `json:"interval_seconds" gorm:"not null;default:10"`
+	RetentionDays   int          `json:"retention_days" gorm:"not null;default:30"`
+	Enabled         bool         `json:"enabled" gorm:"default:true"`
+	LastSampledAt   *time.Time   `json:"last_sampled_at"`
+	CreatedAt       time.Time    `json:"created_at"`
+	UpdatedAt       time.Time    `json:"updated_at"`
+}
+
+type MonitorRecord struct {
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	MonitorItemID uint      `json:"monitor_item_id" gorm:"index;not null"`
+	Value         string    `json:"value" gorm:"type:text"`
+	Quality       string    `json:"quality" gorm:"size:16"`
+	RecordedAt    time.Time `json:"recorded_at" gorm:"index"`
+}
+
+type Dashboard struct {
+	ID             uint              `json:"id" gorm:"primaryKey"`
+	Name           string            `json:"name" gorm:"size:128;not null"`
+	Description    string            `json:"description" gorm:"type:text"`
+	TimeRangeHours int               `json:"time_range_hours" gorm:"not null;default:24"`
+	StatusRunning  string            `json:"status_running" gorm:"size:255"`
+	StatusIdle     string            `json:"status_idle" gorm:"size:255"`
+	Widgets        []DashboardWidget `json:"widgets,omitempty" gorm:"foreignKey:DashboardID;constraint:OnDelete:CASCADE"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+}
+
+type DashboardWidget struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	DashboardID uint      `json:"dashboard_id" gorm:"index;not null"`
+	WidgetType  string    `json:"widget_type" gorm:"size:32;not null"`
+	Title       string    `json:"title" gorm:"size:128"`
+	X           int       `json:"x"`
+	Y           int       `json:"y"`
+	Width       int       `json:"width" gorm:"default:3"`
+	Height      int       `json:"height" gorm:"default:2"`
+	Config      string    `json:"config" gorm:"type:text"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type FlowRun struct {

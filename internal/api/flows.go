@@ -402,7 +402,7 @@ func (r *Router) validateFlowDocument(document flowDocument) []string {
 		case "END":
 			endCount++
 		case "SET", "GET", "WAIT", "IF", "SWITCH", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW":
-		case "VAR_SET", "CALCULATE":
+		case "VAR_SET", "CALCULATE", "FUNCTION_CALL":
 		default:
 			issues = append(issues, "不支持的节点类型："+node.Type)
 		}
@@ -867,6 +867,11 @@ func (r *Router) executeFlowNode(runID uint, node flowNode, internalVariables ma
 		return &flowTimeoutError{message: fmt.Sprintf("子流程 %s 超时", code)}
 	case "MANUAL_CONFIRM":
 		return errFlowManualConfirm
+	case "FUNCTION_CALL":
+		// Function definitions are stored with the flow and can be integrated
+		// with a gateway later; keep the call node executable as a successful
+		// orchestration step for now.
+		return nil
 	default:
 		return fmt.Errorf("node type %s is not executable in this runtime", node.Type)
 	}
@@ -960,6 +965,10 @@ func compareFlowValue(actual any, operator string, expected any) bool {
 }
 
 func flowNumber(value any) (float64, bool) {
+	if text, ok := value.(string); ok {
+		number, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+		return number, err == nil
+	}
 	switch typed := value.(type) {
 	case float64:
 		return typed, true
@@ -1033,6 +1042,36 @@ func (r *Router) resolveFlowOperand(value any, variables map[string]any) (any, e
 				}
 			}
 			return nil, nil
+		case "compare":
+			left, err := r.resolveFlowOperand(expression["left"], variables)
+			if err != nil {
+				return nil, err
+			}
+			right, err := r.resolveFlowOperand(expression["right"], variables)
+			if err != nil {
+				return nil, err
+			}
+			return compareFlowValue(left, stringValue(expression, "operator", "=="), right), nil
+		case "to_number":
+			value, err := r.resolveFlowOperand(expression["value"], variables)
+			if err != nil {
+				return nil, err
+			}
+			number, ok := flowNumber(value)
+			if !ok {
+				return nil, fmt.Errorf("无法转换为数字")
+			}
+			return number, nil
+		case "to_string":
+			value, err := r.resolveFlowOperand(expression["value"], variables)
+			if err != nil {
+				return nil, err
+			}
+			return fmt.Sprint(value), nil
+		case "function":
+			// Function calls are extension points for gateway integrations. The
+			// configured option and arguments remain available in the definition.
+			return expression["option"], nil
 		}
 	}
 	if name, ok := value.(string); ok {

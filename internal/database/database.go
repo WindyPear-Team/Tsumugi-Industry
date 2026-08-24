@@ -58,6 +58,10 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		&models.FlowDefinition{},
 		&models.FlowRun{},
 		&models.FlowNodeRun{},
+		&models.MonitorItem{},
+		&models.MonitorRecord{},
+		&models.Dashboard{},
+		&models.DashboardWidget{},
 	); err != nil {
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}

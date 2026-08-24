@@ -41,15 +41,18 @@ type workOrderStepRequest struct {
 }
 
 type workOrderRequest struct {
-	Code           string                 `json:"code" binding:"required,max=64"`
-	ProductCode    string                 `json:"product_code" binding:"required,max=64"`
-	ProductName    string                 `json:"product_name" binding:"required,max=128"`
-	PlannedQty     int                    `json:"planned_qty" binding:"required,gt=0"`
-	Priority       string                 `json:"priority" binding:"max=16"`
-	ScheduledStart *time.Time             `json:"scheduled_start"`
-	ScheduledEnd   *time.Time             `json:"scheduled_end"`
-	Notes          string                 `json:"notes"`
-	Steps          []workOrderStepRequest `json:"steps" binding:"required,min=1,max=50"`
+	Code             string                 `json:"code" binding:"max=64"`
+	Name             string                 `json:"name" binding:"max=128"`
+	ProductCode      string                 `json:"product_code" binding:"max=64"`
+	ProductName      string                 `json:"product_name" binding:"max=128"`
+	PlannedQty       int                    `json:"planned_qty"`
+	FlowDefinitionID *uint                  `json:"flow_definition_id"`
+	FlowVariables    map[string]any         `json:"flow_variables"`
+	Priority         string                 `json:"priority" binding:"max=16"`
+	ScheduledStart   *time.Time             `json:"scheduled_start"`
+	ScheduledEnd     *time.Time             `json:"scheduled_end"`
+	Notes            string                 `json:"notes"`
+	Steps            []workOrderStepRequest `json:"steps" binding:"max=50"`
 }
 
 type stepCompleteRequest struct {
@@ -105,6 +108,30 @@ func (r *Router) createWorkOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if request.FlowDefinitionID != nil {
+		if strings.TrimSpace(request.Name) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+			return
+		}
+		if request.Code == "" {
+			request.Code = "WO-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		}
+		if request.ProductName == "" {
+			request.ProductName = request.Name
+		}
+		if request.ProductCode == "" {
+			request.ProductCode = request.Code
+		}
+		if request.PlannedQty < 1 {
+			request.PlannedQty = 1
+		}
+		if len(request.Steps) == 0 {
+			request.Steps = []workOrderStepRequest{{Sequence: 1, Code: "FLOW", Name: request.Name, PlannedQty: request.PlannedQty}}
+		}
+	} else if strings.TrimSpace(request.Code) == "" || strings.TrimSpace(request.ProductCode) == "" || strings.TrimSpace(request.ProductName) == "" || request.PlannedQty < 1 || len(request.Steps) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "传统工单需要编码、产品、计划数量和工序；新工单请填写 name 与 flow_definition_id"})
+		return
+	}
 	steps, err := normalizeWorkOrderSteps(request.Steps, request.PlannedQty)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -119,10 +146,12 @@ func (r *Router) createWorkOrder(c *gin.Context) {
 		priority = "normal"
 	}
 	user := auth.CurrentUser(c)
+	variablesJSON, _ := json.Marshal(request.FlowVariables)
 	order := models.WorkOrder{
 		Code: strings.TrimSpace(request.Code), ProductCode: strings.TrimSpace(request.ProductCode), ProductName: strings.TrimSpace(request.ProductName),
 		PlannedQty: request.PlannedQty, Priority: priority, Status: workOrderDraft,
 		ScheduledStart: request.ScheduledStart, ScheduledEnd: request.ScheduledEnd, Notes: request.Notes, Version: 1,
+		FlowDefinitionID: request.FlowDefinitionID, FlowVariables: string(variablesJSON),
 	}
 	if user != nil {
 		order.CreatedByID = &user.ID
@@ -166,6 +195,26 @@ func (r *Router) updateWorkOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if request.FlowDefinitionID != nil {
+		if strings.TrimSpace(request.Name) == "" {
+			request.Name = request.ProductName
+		}
+		if request.Code == "" {
+			request.Code = "WO-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		}
+		if request.ProductName == "" {
+			request.ProductName = request.Name
+		}
+		if request.ProductCode == "" {
+			request.ProductCode = request.Code
+		}
+		if request.PlannedQty < 1 {
+			request.PlannedQty = 1
+		}
+		if len(request.Steps) == 0 {
+			request.Steps = []workOrderStepRequest{{Sequence: 1, Code: "FLOW", Name: request.Name, PlannedQty: request.PlannedQty}}
+		}
+	}
 	steps, err := normalizeWorkOrderSteps(request.Steps, request.PlannedQty)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -190,7 +239,8 @@ func (r *Router) updateWorkOrder(c *gin.Context) {
 		if priority == "" {
 			priority = "normal"
 		}
-		updates := map[string]any{"code": strings.TrimSpace(request.Code), "product_code": strings.TrimSpace(request.ProductCode), "product_name": strings.TrimSpace(request.ProductName), "planned_qty": request.PlannedQty, "priority": priority, "scheduled_start": request.ScheduledStart, "scheduled_end": request.ScheduledEnd, "notes": request.Notes, "version": order.Version + 1}
+		variablesJSON, _ := json.Marshal(request.FlowVariables)
+		updates := map[string]any{"code": strings.TrimSpace(request.Code), "product_code": strings.TrimSpace(request.ProductCode), "product_name": strings.TrimSpace(request.ProductName), "planned_qty": request.PlannedQty, "priority": priority, "scheduled_start": request.ScheduledStart, "scheduled_end": request.ScheduledEnd, "notes": request.Notes, "version": order.Version + 1, "flow_definition_id": request.FlowDefinitionID, "flow_variables": string(variablesJSON)}
 		if result := tx.Model(&models.WorkOrder{}).Where("id = ? AND version = ?", order.ID, order.Version).Updates(updates); result.Error != nil {
 			return result.Error
 		} else if result.RowsAffected != 1 {
@@ -585,7 +635,7 @@ func appendProductionEventWithMeta(tx *gorm.DB, order *models.WorkOrder, step *m
 
 func loadWorkOrder(db *gorm.DB, id uint, includeEvents bool) (models.WorkOrder, error) {
 	var order models.WorkOrder
-	query := db.Preload("Steps", func(tx *gorm.DB) *gorm.DB { return tx.Preload("Device").Order("sequence ASC") })
+	query := db.Preload("FlowDefinition").Preload("Steps", func(tx *gorm.DB) *gorm.DB { return tx.Preload("Device").Order("sequence ASC") })
 	if includeEvents {
 		query = query.Preload("Events", func(tx *gorm.DB) *gorm.DB { return tx.Order("created_at DESC").Limit(100) })
 	}

@@ -75,6 +75,10 @@ func (s *Service) CreateBackup(createdBy string) (models.Backup, error) {
 	var flows []models.FlowDefinition
 	var flowRuns []models.FlowRun
 	var flowNodeRuns []models.FlowNodeRun
+	var monitorItems []models.MonitorItem
+	var monitorRecords []models.MonitorRecord
+	var dashboards []models.Dashboard
+	var dashboardWidgets []models.DashboardWidget
 	s.db.Find(&users)
 	s.db.Find(&roles)
 	s.db.Find(&permissions)
@@ -86,7 +90,11 @@ func (s *Service) CreateBackup(createdBy string) (models.Backup, error) {
 	s.db.Find(&flows)
 	s.db.Find(&flowRuns)
 	s.db.Find(&flowNodeRuns)
-	payload := map[string]any{"settings": settings, "users": users, "roles": roles, "permissions": permissions, "devices": devices, "work_orders": workOrders, "work_order_steps": workOrderSteps, "production_events": productionEvents, "variables": variables, "flows": flows, "flow_runs": flowRuns, "flow_node_runs": flowNodeRuns}
+	s.db.Find(&monitorItems)
+	s.db.Find(&monitorRecords)
+	s.db.Find(&dashboards)
+	s.db.Find(&dashboardWidgets)
+	payload := map[string]any{"settings": settings, "users": users, "roles": roles, "permissions": permissions, "devices": devices, "work_orders": workOrders, "work_order_steps": workOrderSteps, "production_events": productionEvents, "variables": variables, "flows": flows, "flow_runs": flowRuns, "flow_node_runs": flowNodeRuns, "monitor_items": monitorItems, "monitor_records": monitorRecords, "dashboards": dashboards, "dashboard_widgets": dashboardWidgets}
 	content, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return models.Backup{}, err
@@ -117,6 +125,10 @@ func (s *Service) RestoreBackup(backup models.Backup) error {
 		Flows            []models.FlowDefinition  `json:"flows"`
 		FlowRuns         []models.FlowRun         `json:"flow_runs"`
 		FlowNodeRuns     []models.FlowNodeRun     `json:"flow_node_runs"`
+		MonitorItems     []models.MonitorItem     `json:"monitor_items"`
+		MonitorRecords   []models.MonitorRecord   `json:"monitor_records"`
+		Dashboards       []models.Dashboard       `json:"dashboards"`
+		DashboardWidgets []models.DashboardWidget `json:"dashboard_widgets"`
 	}
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return err
@@ -179,6 +191,26 @@ func (s *Service) RestoreBackup(backup models.Backup) error {
 		}
 		for _, nodeRun := range payload.FlowNodeRuns {
 			if err := tx.Save(&nodeRun).Error; err != nil {
+				return err
+			}
+		}
+		for _, item := range payload.MonitorItems {
+			if err := tx.Save(&item).Error; err != nil {
+				return err
+			}
+		}
+		for _, record := range payload.MonitorRecords {
+			if err := tx.Save(&record).Error; err != nil {
+				return err
+			}
+		}
+		for _, dashboard := range payload.Dashboards {
+			if err := tx.Save(&dashboard).Error; err != nil {
+				return err
+			}
+		}
+		for _, widget := range payload.DashboardWidgets {
+			if err := tx.Save(&widget).Error; err != nil {
 				return err
 			}
 		}
