@@ -293,10 +293,10 @@ type DashboardWidget struct {
 	DashboardID uint      `json:"dashboard_id" gorm:"index;not null"`
 	WidgetType  string    `json:"widget_type" gorm:"size:32;not null"`
 	Title       string    `json:"title" gorm:"size:128"`
-	X           int       `json:"x"`
-	Y           int       `json:"y"`
-	Width       int       `json:"width" gorm:"default:3"`
-	Height      int       `json:"height" gorm:"default:2"`
+	X           float64   `json:"x"`
+	Y           float64   `json:"y"`
+	Width       float64   `json:"width" gorm:"default:3"`
+	Height      float64   `json:"height" gorm:"default:2"`
 	Config      string    `json:"config" gorm:"type:text"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

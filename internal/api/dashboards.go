@@ -20,14 +20,14 @@ type dashboardRequest struct {
 	Widgets         []dashboardWidgetRequest `json:"widgets"`
 }
 type dashboardWidgetRequest struct {
-	ID         uint   `json:"id"`
-	WidgetType string `json:"widget_type"`
-	Title      string `json:"title"`
-	X          int    `json:"x"`
-	Y          int    `json:"y"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	Config     any    `json:"config"`
+	ID         uint    `json:"id"`
+	WidgetType string  `json:"widget_type"`
+	Title      string  `json:"title"`
+	X          float64 `json:"x"`
+	Y          float64 `json:"y"`
+	Width      float64 `json:"width"`
+	Height     float64 `json:"height"`
+	Config     any     `json:"config"`
 }
 
 func (r *Router) dashboards(c *gin.Context) {
@@ -103,7 +103,7 @@ func (r *Router) saveDashboard(item *models.Dashboard, widgets []dashboardWidget
 			if err != nil {
 				return err
 			}
-			if err := tx.Create(&models.DashboardWidget{DashboardID: item.ID, WidgetType: widget.WidgetType, Title: widget.Title, X: widget.X, Y: widget.Y, Width: maxPositive(widget.Width, 3), Height: maxPositive(widget.Height, 2), Config: string(config)}).Error; err != nil {
+			if err := tx.Create(&models.DashboardWidget{DashboardID: item.ID, WidgetType: widget.WidgetType, Title: widget.Title, X: widget.X, Y: widget.Y, Width: maxPositiveFloat(widget.Width, 3), Height: maxPositiveFloat(widget.Height, 2), Config: string(config)}).Error; err != nil {
 				return err
 			}
 		}
@@ -111,6 +111,13 @@ func (r *Router) saveDashboard(item *models.Dashboard, widgets []dashboardWidget
 	})
 }
 func maxPositive(value, fallback int) int {
+	if value < 1 {
+		return fallback
+	}
+	return value
+}
+
+func maxPositiveFloat(value, fallback float64) float64 {
 	if value < 1 {
 		return fallback
 	}
