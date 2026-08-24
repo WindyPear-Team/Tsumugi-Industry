@@ -77,7 +77,9 @@ function updateFunctionCallShape(block: Blockly.Block) {
   for (let index = 1; index <= 20; index++) { block.removeInput(`ARG_${index}`, true); block.removeInput(`ARG_VALUE_${index}`, true) }
   parameters.forEach((parameter, index) => {
     const inputName = `ARG_${index + 1}`
-    if (parameter.type === "select" || parameter.type === "device" || parameter.type === "option") {
+    if (parameter.type === "label") {
+      block.appendDummyInput(inputName).appendField(parameter.default_value || parameter.name)
+    } else if (parameter.type === "select" || parameter.type === "device" || parameter.type === "option") {
       block.appendDummyInput(inputName).appendField(parameter.name).appendField(new Blockly.FieldDropdown(() => functionArgumentOptions(parameter)), `ARG_VALUE_${index + 1}`)
     } else {
       block.appendValueInput(inputName).appendField(parameter.name)
@@ -91,7 +93,7 @@ function setFunctionBlockChangeHandler(block: Blockly.Block) {
 }
 
 function functionArgumentsFromBlock(block: Blockly.Block): unknown[] {
-  return functionParameters(block).map((parameter, index) => parameter.type === "select" || parameter.type === "device" || parameter.type === "option"
+  return functionParameters(block).map((parameter, index) => parameter.type === "label" ? undefined : parameter.type === "select" || parameter.type === "device" || parameter.type === "option"
     ? block.getFieldValue(`ARG_VALUE_${index + 1}`) ?? ""
     : expressionFromBlock(block.getInput(`ARG_${index + 1}`)?.connection?.targetBlock()) ?? "")
 }
