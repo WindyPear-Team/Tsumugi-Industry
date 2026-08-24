@@ -18,6 +18,7 @@ const nodeLabels: Record<string, string> = {
 const nodeColours: Record<string, number> = { START: 210, END: 210, SET: 5, GET: 190, WAIT: 35, IF: 195, DELAY: 25, MANUAL_CONFIRM: 320, ALARM: 5, LOOP: 230, PARALLEL: 165, SUBFLOW: 275 }
 let plcOptions: [string, string][] = [["请先配置 PLC", ""]]
 let variablesByPLC = new Map<string, PLCVariable[]>()
+let flowOptions: [string, string][] = [["请先配置已发布子流程", ""]]
 const emptyDocument: FlowDocument = {
   nodes: [
     { id: "start", type: "START", label: "开始", x: 80, y: 40, config: {} },
@@ -51,6 +52,9 @@ function selectedVariable(name: string | null) {
   }
   return undefined
 }
+function flowFieldOptions(): [string, string][] {
+  return flowOptions.length > 0 ? flowOptions : [["请先配置已发布子流程", ""]]
+}
 
 function defineFlowBlocks() {
   if (Blockly.Blocks.flow_if) return
@@ -75,7 +79,8 @@ function defineFlowBlocks() {
         this.appendDummyInput().appendField("读取 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE")
       } else if (type === "WAIT") {
         this.appendDummyInput().appendField("等待 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
-        this.appendDummyInput().appendField("超时秒数").appendField(new Blockly.FieldNumber(10, 1), "TIMEOUT").appendField("超时策略").appendField(new Blockly.FieldDropdown([["失败", "FAIL"], ["重试", "RETRY"], ["报警", "ALARM"], ["跳转", "JUMP"], ["人工确认", "MANUAL_CONFIRM"]]), "TIMEOUT_ACTION").appendField("最大重试").appendField(new Blockly.FieldNumber(0, 0), "MAX_RETRIES").appendField("重试间隔").appendField(new Blockly.FieldNumber(1, 0), "RETRY_INTERVAL")
+        this.appendDummyInput().appendField("超时秒数").appendField(new Blockly.FieldNumber(10, 1), "TIMEOUT")
+        this.appendStatementInput("TIMEOUT_BRANCH").appendField("超时")
       } else if (type === "DELAY") {
         this.appendDummyInput().appendField("延时秒数").appendField(new Blockly.FieldNumber(5, 1), "SECONDS")
       } else if (type === "LOOP") {
@@ -83,8 +88,9 @@ function defineFlowBlocks() {
         this.appendStatementInput("BODY").appendField("循环体")
         this.appendStatementInput("EXIT").appendField("结束后")
       } else if (type === "SUBFLOW") {
-        this.appendDummyInput().appendField("子流程编码").appendField(new Blockly.FieldTextInput("流程编码"), "FLOW_CODE")
+        this.appendDummyInput().appendField("子流程").appendField(new Blockly.FieldDropdown(() => flowFieldOptions()), "FLOW_CODE")
         this.appendDummyInput().appendField("超时秒数").appendField(new Blockly.FieldNumber(60, 1), "TIMEOUT")
+        this.appendStatementInput("TIMEOUT_BRANCH").appendField("超时")
       } else if (type === "ALARM") {
         this.appendDummyInput().appendField("报警消息").appendField(new Blockly.FieldTextInput("流程报警"), "MESSAGE").appendField("级别").appendField(new Blockly.FieldDropdown([["提示", "info"], ["警告", "warning"], ["严重", "critical"]]), "LEVEL")
       } else if (type === "MANUAL_CONFIRM") {
@@ -146,9 +152,6 @@ function configFromBlock(block: Blockly.Block, type: string) {
   if (type === "SET") config.value = parseFieldValue(field("VALUE"))
   if (type === "WAIT") {
     config.timeout_seconds = Number(field("TIMEOUT") ?? config.timeout_seconds)
-    config.timeout_action = field("TIMEOUT_ACTION") ?? config.timeout_action
-    config.max_retries = Number(field("MAX_RETRIES") ?? config.max_retries)
-    config.retry_interval_seconds = Number(field("RETRY_INTERVAL") ?? 1)
   }
   if (type === "DELAY") config.seconds = Number(field("SECONDS") ?? config.seconds)
   if (type === "LOOP") config.max_iterations = Number(field("MAX_ITERATIONS") ?? config.max_iterations)
@@ -177,12 +180,14 @@ function documentFromWorkspace(workspace: Blockly.WorkspaceSvg): FlowDocument {
   for (const block of blocks) {
     const next = block.getNextBlock()
     if (next) edges.push({ id: `${block.id}-${next.id}`, source: block.id, target: next.id })
-    if (block.type === "flow_if" || block.type === "flow_parallel" || block.type === "flow_loop") {
+    if (block.type === "flow_if" || block.type === "flow_parallel" || block.type === "flow_loop" || block.type === "flow_wait" || block.type === "flow_subflow") {
       const branchInputs = block.type === "flow_if"
         ? [["TRUE", "true"], ["FALSE", "false"]] as const
         : block.type === "flow_parallel"
           ? [["BRANCH_A", "parallel_1"], ["BRANCH_B", "parallel_2"]] as const
-          : [["BODY", "loop"], ["EXIT", "exit"]] as const
+          : block.type === "flow_loop"
+            ? [["BODY", "loop"], ["EXIT", "exit"]] as const
+            : [["TIMEOUT_BRANCH", "timeout"]] as const
       for (const [inputName, condition] of branchInputs) {
         const child = block.getInput(inputName)?.connection?.targetBlock()
         if (child) edges.push({ id: `${block.id}-${condition}-${child.id}`, source: block.id, target: child.id, condition })
@@ -203,9 +208,6 @@ function hydrateBlockConfig(block: Blockly.Block, node: FlowNode) {
   set("OP", config.operator)
   set("EXPECTED", config.expected)
   set("TIMEOUT", config.timeout_seconds)
-  set("TIMEOUT_ACTION", config.timeout_action)
-  set("MAX_RETRIES", config.max_retries)
-  set("RETRY_INTERVAL", config.retry_interval_seconds)
   set("SECONDS", config.seconds)
   set("MAX_ITERATIONS", config.max_iterations)
   set("FLOW_CODE", config.flow_code)
@@ -236,6 +238,9 @@ function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDo
           : (edge.condition === "exit" || (!edge.condition && index > 0) ? "EXIT" : "BODY")
       const input = source.getInput(condition)
       if (input?.connection && !input.connection.targetBlock()) input.connection.connect(target.previousConnection)
+    } else if ((source.type === "flow_wait" || source.type === "flow_subflow") && edge.condition === "timeout") {
+      const input = source.getInput("TIMEOUT_BRANCH")
+      if (input?.connection && !input.connection.targetBlock()) input.connection.connect(target.previousConnection)
     } else if (source.nextConnection && !source.nextConnection.targetBlock()) source.nextConnection.connect(target.previousConnection)
   }
   for (const node of document.nodes) {
@@ -258,13 +263,15 @@ export function FlowEditorPage() {
     Promise.all([
       api<{ items: PLC[] }>("/api/plcs?page_size=100"),
       api<{ items: PLCVariable[] }>("/api/variables?page_size=100"),
-    ]).then(([plcResult, variableResult]) => {
+      api<{ items: FlowDefinition[] }>("/api/flows?page_size=100&filter_status=published"),
+    ]).then(([plcResult, variableResult, flowResult]) => {
       plcOptions = plcResult.items.map((plc) => [`${plc.name} · ${plc.code}`, String(plc.id)])
       variablesByPLC = new Map<string, PLCVariable[]>()
       for (const variable of variableResult.items) {
         const key = String(variable.plc_id)
         variablesByPLC.set(key, [...(variablesByPLC.get(key) ?? []), variable])
       }
+      flowOptions = flowResult.items.map((item) => [`${item.name} · ${item.code}`, item.code])
     }).catch(() => {
       plcOptions = [["暂无可用 PLC", ""]]
     }).finally(() => setReferencesReady(true))

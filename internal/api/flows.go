@@ -553,6 +553,7 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 		attempt := 1
 		var nodeErr error
 		jumpTarget := ""
+		timeoutTarget := edgeTargetByCondition(next[node.ID], "timeout", "")
 		for {
 			nodeErr = r.executeFlowNode(runID, node)
 			if nodeErr == nil || errors.Is(nodeErr, errFlowConditionFalse) {
@@ -589,6 +590,10 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 			}
 			if errors.As(nodeErr, &timeoutErr) && strings.EqualFold(stringValue(node.Config, "timeout_action", "FAIL"), "ALARM") {
 				_ = r.db.Create(&models.Alarm{Code: "FLOW_TIMEOUT", Level: "warning", Message: timeoutErr.Error(), Status: "active", OccurredAt: time.Now()})
+			}
+			if errors.As(nodeErr, &timeoutErr) && timeoutTarget != "" {
+				jumpTarget = timeoutTarget
+				nodeErr = nil
 			}
 			break
 		}

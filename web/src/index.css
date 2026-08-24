@@ -147,6 +147,16 @@
   .blockly-editor .blocklyToolboxDiv,
   .blockly-editor .blocklyFlyout {
     background: #eef3ff;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .blockly-editor .blocklyToolboxDiv::-webkit-scrollbar,
+  .blockly-editor .blocklyFlyout::-webkit-scrollbar,
+  .blockly-editor .blocklyFlyoutScrollbar {
+    width: 0;
+    height: 0;
+    display: none;
   }
 
 }
