@@ -10,12 +10,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-const nodeTypes = ["SET", "GET", "WAIT", "IF", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW"] as const
+const nodeTypes = ["SET", "GET", "WAIT", "IF", "SWITCH", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW"] as const
 const nodeLabels: Record<string, string> = {
   START: "开始", END: "结束", SET: "设置变量", GET: "读取变量", WAIT: "等待条件", IF: "如果",
-  DELAY: "延时", MANUAL_CONFIRM: "人工确认", ALARM: "报警", LOOP: "循环", PARALLEL: "并行", SUBFLOW: "子流程",
+  DELAY: "延时", MANUAL_CONFIRM: "人工确认", ALARM: "报警", LOOP: "循环", PARALLEL: "并行", SUBFLOW: "子流程", SWITCH: "多路分支",
 }
-const nodeColours: Record<string, number> = { START: 210, END: 210, SET: 5, GET: 190, WAIT: 35, IF: 195, DELAY: 25, MANUAL_CONFIRM: 320, ALARM: 5, LOOP: 230, PARALLEL: 165, SUBFLOW: 275 }
+const nodeColours: Record<string, number> = { START: 210, END: 210, SET: 5, GET: 190, WAIT: 35, IF: 195, SWITCH: 265, DELAY: 25, MANUAL_CONFIRM: 320, ALARM: 5, LOOP: 230, PARALLEL: 165, SUBFLOW: 275 }
 let plcOptions: [string, string][] = [["请先配置 PLC", ""]]
 let variablesByPLC = new Map<string, PLCVariable[]>()
 let flowOptions: [string, string][] = [["请先配置已发布子流程", ""]]
@@ -38,7 +38,7 @@ function variableFieldOptions(field: Blockly.Field<string>): [string, string][] 
   const variables = variablesByPLC.get(plcID) ?? []
   const filtered = variables.filter((variable) => {
     if (block?.type === "flow_set") return variable.flow_write_allowed && variable.access_mode !== "read"
-    if (block?.type === "flow_wait" || block?.type === "flow_if") return variable.condition_allowed
+    if (block?.type === "flow_wait" || block?.type === "flow_if" || block?.type === "flow_switch") return variable.condition_allowed
     return true
   })
   return filtered.length > 0
@@ -81,6 +81,12 @@ function defineFlowBlocks() {
         this.appendDummyInput().appendField("等待 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
         this.appendDummyInput().appendField("超时秒数").appendField(new Blockly.FieldNumber(10, 1), "TIMEOUT")
         this.appendStatementInput("TIMEOUT_BRANCH").appendField("超时")
+      } else if (type === "SWITCH") {
+        this.appendDummyInput().appendField("多路 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE")
+        this.appendDummyInput().appendField("分支值 1").appendField(new Blockly.FieldTextInput("1"), "CASE_1").appendField("分支值 2").appendField(new Blockly.FieldTextInput("2"), "CASE_2")
+        this.appendStatementInput("CASE_1_BRANCH").appendField("值 1")
+        this.appendStatementInput("CASE_2_BRANCH").appendField("值 2")
+        this.appendStatementInput("DEFAULT_BRANCH").appendField("默认")
       } else if (type === "DELAY") {
         this.appendDummyInput().appendField("延时秒数").appendField(new Blockly.FieldNumber(5, 1), "SECONDS")
       } else if (type === "LOOP") {
@@ -102,7 +108,7 @@ function defineFlowBlocks() {
       } else {
         this.appendDummyInput().appendField(nodeLabels[type])
       }
-      if (type === "LOOP" || type === "PARALLEL") this.setPreviousStatement(true)
+      if (type === "LOOP" || type === "PARALLEL" || type === "SWITCH") this.setPreviousStatement(true)
       else { this.setPreviousStatement(true); this.setNextStatement(true) }
       this.setColour(nodeColours[type]); this.setTooltip(nodeLabels[type])
     } }
@@ -123,7 +129,7 @@ function toolboxDefinition() {
 function configFor(type: string): Record<string, unknown> {
   if (type === "LOOP") return { max_iterations: 3 }
   if (type === "DELAY") return { seconds: 5 }
-  if (["SET", "GET", "WAIT", "IF"].includes(type)) return { variable: "", operator: "==", expected: true, timeout_seconds: 10, timeout_action: "FAIL", max_retries: 0, retry_interval_seconds: 1 }
+  if (["SET", "GET", "WAIT", "IF", "SWITCH"].includes(type)) return { variable: "", operator: "==", expected: true, timeout_seconds: 10, timeout_action: "FAIL", max_retries: 0, retry_interval_seconds: 1 }
   return {}
 }
 
@@ -139,7 +145,7 @@ function configFromBlock(block: Blockly.Block, type: string) {
   let config = configFor(type)
   try { config = { ...config, ...(block.data ? JSON.parse(block.data) : {}) } } catch { /* old or malformed metadata */ }
   const field = (name: string) => block.getFieldValue(name)
-  if (["SET", "GET", "WAIT", "IF"].includes(type)) {
+  if (["SET", "GET", "WAIT", "IF", "SWITCH"].includes(type)) {
     config.plc_id = Number(field("PLC_ID") ?? config.plc_id ?? 0) || undefined
     config.variable = field("VARIABLE") ?? config.variable
     const mapped = selectedVariable(String(config.variable ?? ""))
@@ -152,6 +158,10 @@ function configFromBlock(block: Blockly.Block, type: string) {
   if (type === "SET") config.value = parseFieldValue(field("VALUE"))
   if (type === "WAIT") {
     config.timeout_seconds = Number(field("TIMEOUT") ?? config.timeout_seconds)
+  }
+  if (type === "SWITCH") {
+    config.case_1 = parseFieldValue(field("CASE_1"))
+    config.case_2 = parseFieldValue(field("CASE_2"))
   }
   if (type === "DELAY") config.seconds = Number(field("SECONDS") ?? config.seconds)
   if (type === "LOOP") config.max_iterations = Number(field("MAX_ITERATIONS") ?? config.max_iterations)
@@ -180,14 +190,16 @@ function documentFromWorkspace(workspace: Blockly.WorkspaceSvg): FlowDocument {
   for (const block of blocks) {
     const next = block.getNextBlock()
     if (next) edges.push({ id: `${block.id}-${next.id}`, source: block.id, target: next.id })
-    if (block.type === "flow_if" || block.type === "flow_parallel" || block.type === "flow_loop" || block.type === "flow_wait" || block.type === "flow_subflow") {
+    if (block.type === "flow_if" || block.type === "flow_parallel" || block.type === "flow_loop" || block.type === "flow_wait" || block.type === "flow_subflow" || block.type === "flow_switch") {
       const branchInputs = block.type === "flow_if"
         ? [["TRUE", "true"], ["FALSE", "false"]] as const
         : block.type === "flow_parallel"
           ? [["BRANCH_A", "parallel_1"], ["BRANCH_B", "parallel_2"]] as const
           : block.type === "flow_loop"
             ? [["BODY", "loop"], ["EXIT", "exit"]] as const
-            : [["TIMEOUT_BRANCH", "timeout"]] as const
+            : block.type === "flow_switch"
+              ? [["CASE_1_BRANCH", "case_1"], ["CASE_2_BRANCH", "case_2"], ["DEFAULT_BRANCH", "default"]] as const
+              : [["TIMEOUT_BRANCH", "timeout"]] as const
       for (const [inputName, condition] of branchInputs) {
         const child = block.getInput(inputName)?.connection?.targetBlock()
         if (child) edges.push({ id: `${block.id}-${condition}-${child.id}`, source: block.id, target: child.id, condition })
@@ -207,6 +219,8 @@ function hydrateBlockConfig(block: Blockly.Block, node: FlowNode) {
   set("VALUE", config.value)
   set("OP", config.operator)
   set("EXPECTED", config.expected)
+  set("CASE_1", config.case_1)
+  set("CASE_2", config.case_2)
   set("TIMEOUT", config.timeout_seconds)
   set("SECONDS", config.seconds)
   set("MAX_ITERATIONS", config.max_iterations)
@@ -228,14 +242,16 @@ function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDo
   for (const edge of document.edges) {
     const source = blocks.get(edge.source); const target = blocks.get(edge.target)
     if (!source || !target || !target.previousConnection) continue
-    if (source.type === "flow_if" || source.type === "flow_parallel" || source.type === "flow_loop") {
+    if (source.type === "flow_if" || source.type === "flow_parallel" || source.type === "flow_loop" || source.type === "flow_switch") {
       const index = ifEdgeIndex.get(source.id) ?? 0
       ifEdgeIndex.set(source.id, index + 1)
       const condition = source.type === "flow_if"
         ? (edge.condition === "false" || (!edge.condition && index > 0) ? "FALSE" : "TRUE")
         : source.type === "flow_parallel"
           ? (edge.condition === "parallel_2" || (!edge.condition && index > 0) ? "BRANCH_B" : "BRANCH_A")
-          : (edge.condition === "exit" || (!edge.condition && index > 0) ? "EXIT" : "BODY")
+        : source.type === "flow_loop"
+          ? (edge.condition === "exit" || (!edge.condition && index > 0) ? "EXIT" : "BODY")
+          : edge.condition === "case_2" ? "CASE_2_BRANCH" : edge.condition === "default" ? "DEFAULT_BRANCH" : "CASE_1_BRANCH"
       const input = source.getInput(condition)
       if (input?.connection && !input.connection.targetBlock()) input.connection.connect(target.previousConnection)
     } else if ((source.type === "flow_wait" || source.type === "flow_subflow") && edge.condition === "timeout") {

@@ -34,6 +34,13 @@ const (
 var errFlowConditionFalse = errors.New("flow condition false")
 var errFlowManualConfirm = errors.New("manual confirmation required")
 
+type flowSwitchError struct {
+	condition string
+	message   string
+}
+
+func (e *flowSwitchError) Error() string { return e.message }
+
 type flowTimeoutError struct{ message string }
 
 func (e *flowTimeoutError) Error() string { return e.message }
@@ -393,7 +400,7 @@ func (r *Router) validateFlowDocument(document flowDocument) []string {
 			startCount++
 		case "END":
 			endCount++
-		case "SET", "GET", "WAIT", "IF", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW":
+		case "SET", "GET", "WAIT", "IF", "SWITCH", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW":
 		default:
 			issues = append(issues, "不支持的节点类型："+node.Type)
 		}
@@ -437,6 +444,9 @@ func (r *Router) validateFlowDocument(document flowDocument) []string {
 		}
 		if strings.EqualFold(node.Type, "IF") && outgoing < 2 {
 			issues = append(issues, "IF 节点必须至少有两条分支连线："+node.ID)
+		}
+		if strings.EqualFold(node.Type, "SWITCH") && outgoing < 2 {
+			issues = append(issues, "SWITCH 节点必须至少有两条分支连线："+node.ID)
 		}
 		if strings.EqualFold(node.Type, "LOOP") && configNumberDefault(node.Config, "max_iterations", 0) <= 0 {
 			issues = append(issues, "LOOP 节点必须配置大于 0 的 max_iterations："+node.ID)
@@ -600,6 +610,12 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 		ended := time.Now()
 		status := "success"
 		conditionFalse := errors.Is(nodeErr, errFlowConditionFalse)
+		branchCondition := ""
+		var switchErr *flowSwitchError
+		if errors.As(nodeErr, &switchErr) {
+			branchCondition = switchErr.condition
+			nodeErr = nil
+		}
 		if errors.Is(nodeErr, errFlowManualConfirm) {
 			r.db.Model(&nodeRun).Updates(map[string]any{"status": flowConfirm})
 			r.db.Model(&models.FlowRun{}).Where("id = ?", runID).Update("status", flowConfirm)
@@ -650,10 +666,16 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 			}
 			continue
 		}
+		if branchCondition != "" {
+			current = edgeTargetByCondition(edges, branchCondition, edges[0].Target)
+			continue
+		}
 		current = edges[0].Target
 		if strings.EqualFold(node.Type, "IF") {
-			if conditionFalse && len(edges) > 1 {
-				current = edges[1].Target
+			if conditionFalse {
+				current = edgeTargetByCondition(edges, "false", edges[len(edges)-1].Target)
+			} else {
+				current = edgeTargetByCondition(edges, "true", edges[0].Target)
 			}
 		}
 	}
@@ -668,7 +690,7 @@ func (r *Router) executeFlowNode(runID uint, node flowNode) error {
 	case "ALARM":
 		message := stringValue(config, "message", "流程报警")
 		return r.db.Create(&models.Alarm{Code: "FLOW_ALARM", Level: stringValue(config, "level", "warning"), Message: message, Status: "active", OccurredAt: time.Now()}).Error
-	case "GET", "IF":
+	case "GET", "IF", "SWITCH":
 		variableName, _ := config["variable"].(string)
 		if strings.TrimSpace(variableName) == "" {
 			return errors.New("节点未配置语义变量")
@@ -685,6 +707,15 @@ func (r *Router) executeFlowNode(runID uint, node flowNode) error {
 			if !compareFlowValue(value, operator, config["expected"]) {
 				return errFlowConditionFalse
 			}
+		}
+		if strings.EqualFold(node.Type, "SWITCH") {
+			condition := "default"
+			if compareFlowValue(value, "==", config["case_1"]) {
+				condition = "case_1"
+			} else if compareFlowValue(value, "==", config["case_2"]) {
+				condition = "case_2"
+			}
+			return &flowSwitchError{condition: condition, message: "SWITCH 分支匹配：" + condition}
 		}
 		return nil
 	case "DELAY":
