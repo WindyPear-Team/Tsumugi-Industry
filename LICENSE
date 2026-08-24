@@ -1,0 +1,154 @@
+CCB License 1.0
+
+Community Code Boundary License
+
+Copyright (c) [YEAR] [COPYRIGHT HOLDER]
+
+“CCB” means Community Code Boundary, representing the principle that the Covered Work may be freely used, modified, and shared within non-commercial activities, while commercial exploitation remains outside the permissions granted by this License.
+
+1. Definitions
+
+1.1 “Covered Work” means the software, source code, documentation, or other copyrightable material distributed under this License.
+
+1.2 “Original Work” means the Covered Work as originally distributed by its copyright holder.
+
+1.3 “Modified Work” means any work based upon, derived from, modified from, or incorporating a substantial portion of the Covered Work.
+
+1.4 “Distribute” means to make the Covered Work or a Modified Work available to another party, whether by copying, publishing, hosting, transmitting, or otherwise making it available.
+
+1.5 “Non-Commercial Activity” means an activity that is not primarily intended for or directed toward commercial advantage, monetary compensation, or the generation of revenue.
+
+1.6 “Commercial Activity” means any activity primarily intended for commercial advantage, monetary compensation, revenue generation, or other direct financial benefit.
+
+2. Copyright Grant
+
+Subject to the conditions of this License, the copyright holder grants you a worldwide, royalty-free, non-exclusive license to:
+
+- use the Covered Work;
+- study the Covered Work;
+- modify the Covered Work;
+- create Modified Works;
+- reproduce the Covered Work;
+- distribute the Covered Work or Modified Works;
+
+provided that all such activities are conducted solely as part of Non-Commercial Activity.
+
+3. Non-Commercial Restriction
+
+You may not use, reproduce, modify, distribute, sublicense, host, provide as a service, sell, license, or otherwise exploit the Covered Work or any Modified Work for Commercial Activity under this License.
+
+This restriction applies regardless of whether the Covered Work itself is provided without charge.
+
+Use of the Covered Work by individuals, educational institutions, research activities, hobby projects, personal projects, non-profit organizations, community projects, and other activities that are genuinely Non-Commercial is permitted.
+
+The absence of a direct charge does not by itself make an activity Non-Commercial.
+
+4. Modification
+
+You are permitted to freely modify the Covered Work for Non-Commercial Activity.
+
+You may make Modified Works available in source form or in executable, compiled, binary, or otherwise machine-readable form.
+
+You are not required to publish your modifications merely because you have modified or privately used the Covered Work.
+
+5. Distribution of Modified Works
+
+If you Distribute a Modified Work in source form, the complete source code of the Modified Work must be made available under this License.
+
+You may not impose additional restrictions on the rights granted by this License.
+
+A Modified Work may be distributed in closed-source form.
+
+However, if you subsequently make the source code of that Modified Work publicly or privately available to another party, that source code must be distributed under this License.
+
+6. Same-License Requirement
+
+Any Covered Work or Modified Work distributed in source form must be distributed under CCB License 1.0, unless a later version of this License explicitly permits otherwise.
+
+You may not distribute a Modified Work under a proprietary license, a permissive license, or another license that grants recipients rights inconsistent with this License.
+
+This requirement applies only to the Covered Work and Modified Works themselves and does not require unrelated works distributed alongside them to be licensed under CCB.
+
+7. Binary and Closed-Source Distribution
+
+You may distribute a Covered Work or Modified Work solely in compiled, binary, or other non-source form for Non-Commercial Activity without publishing its source code.
+
+Such distribution does not by itself trigger an obligation to disclose source code.
+
+However, all recipients must remain subject to the restrictions of this License with respect to the Covered Work and Modified Work.
+
+8. License Notice
+
+Any distribution of the Covered Work or a Modified Work must retain:
+
+- the original copyright notice;
+- a notice identifying this License;
+- a copy of this License or a clear reference to its full text.
+
+If the Covered Work contains existing attribution notices, you may not remove them except where technically necessary.
+
+9. No Additional Restrictions
+
+You may not impose any additional legal or technical restriction that prevents a recipient from exercising the rights granted by this License.
+
+In particular, you may not use an additional license, contract, access restriction, or technological measure to circumvent the Non-Commercial and same-license requirements of this License.
+
+10. No Trademark Grant
+
+This License does not grant any rights to use the names, trademarks, service marks, logos, or other branding of the copyright holder, except where such use is reasonably necessary to identify the Covered Work.
+
+11. No Warranty
+
+THE COVERED WORK IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF OR INABILITY TO USE THE COVERED WORK.
+
+12. Termination
+
+Your rights under this License terminate automatically if you materially violate its terms.
+
+Rights granted to you under this License may be reinstated if:
+
+1. the violation is cured within thirty (30) days after you become aware of it; or
+2. the copyright holder explicitly reinstates your rights.
+
+Termination does not affect rights already validly granted to recipients who have not themselves violated this License.
+
+13. No Sublicensing
+
+You may not sublicense the Covered Work.
+
+Any recipient receives rights directly under this License rather than through a sublicense granted by you.
+
+14. Severability
+
+If any provision of this License is held to be unenforceable or invalid, that provision shall be interpreted to the minimum extent necessary to make it enforceable, and the remaining provisions shall remain in effect.
+
+15. Entire License
+
+This License constitutes the complete terms governing the rights granted to the Covered Work, except where the copyright holder expressly provides additional permissions in writing.
+
+---
+
+Summary of Permissions
+
+Permission| CCB-1.0
+Personal use| ✓
+Study source code| ✓
+Modify| ✓
+Private modifications| ✓
+Non-commercial redistribution| ✓
+Non-commercial redistribution of modified versions| ✓
+Closed-source non-commercial distribution| ✓
+Commercial use| ✗
+Commercial redistribution| ✗
+Commercial SaaS/service use| ✗
+Publish modified source| ✓
+Modified source must use CCB| ✓
+Proprietary license for modified source| ✗
+Sublicensing| ✗
+Attribution/copyright removal| ✗
+
+CCB License 1.0 — Community Code Boundary License
+
+This license is a custom license and is not an OSI-approved Open Source license.
