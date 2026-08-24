@@ -72,18 +72,18 @@ const nodeLabels: Record<string, string> = {
   SUBFLOW: "子流程",
 }
 const nodeColors: Record<string, string> = {
-  START: "border-l-emerald-500",
-  END: "border-l-slate-500",
-  SET: "border-l-blue-500",
-  GET: "border-l-cyan-500",
-  WAIT: "border-l-amber-500",
-  IF: "border-l-violet-500",
-  DELAY: "border-l-orange-500",
-  MANUAL_CONFIRM: "border-l-pink-500",
-  ALARM: "border-l-red-500",
-  LOOP: "border-l-indigo-500",
-  PARALLEL: "border-l-teal-500",
-  SUBFLOW: "border-l-fuchsia-500",
+  START: "bg-blue-500 border-blue-600",
+  END: "bg-blue-500 border-blue-600",
+  SET: "bg-red-500 border-red-600",
+  GET: "bg-cyan-500 border-cyan-600",
+  WAIT: "bg-amber-500 border-amber-600",
+  IF: "bg-violet-500 border-violet-600",
+  DELAY: "bg-orange-500 border-orange-600",
+  MANUAL_CONFIRM: "bg-pink-500 border-pink-600",
+  ALARM: "bg-red-600 border-red-700",
+  LOOP: "bg-indigo-500 border-indigo-600",
+  PARALLEL: "bg-teal-500 border-teal-600",
+  SUBFLOW: "bg-fuchsia-500 border-fuchsia-600",
 }
 const emptyDocument: FlowDocument = {
   nodes: [
@@ -156,8 +156,6 @@ function isMagneticDocument(flowDocument: FlowDocument) {
   const start = flowDocument.nodes.find((node) => node.type === "START")
   const end = flowDocument.nodes.find((node) => node.type === "END")
   if (!start || !end || flowDocument.nodes.length < 2) return false
-  if (flowDocument.edges.length !== flowDocument.nodes.length - 1) return false
-
   const outgoing = new Map<string, string>()
   const incoming = new Set<string>()
   for (const edge of flowDocument.edges) {
@@ -172,7 +170,10 @@ function isMagneticDocument(flowDocument: FlowDocument) {
     visited.add(current)
     current = outgoing.get(current)
   }
-  return visited.size === flowDocument.nodes.length && visited.has(end.id)
+  if (!visited.has(end.id)) return false
+  return flowDocument.edges.every(
+    (edge) => visited.has(edge.source) && visited.has(edge.target)
+  )
 }
 
 function linearNodes(flowDocument: FlowDocument) {
@@ -193,6 +194,22 @@ function linearNodes(flowDocument: FlowDocument) {
   return ordered
 }
 
+function rebuildChain(flowDocument: FlowDocument, middle: FlowNode[]) {
+  const start = flowDocument.nodes.find((node) => node.type === "START")
+  const end = flowDocument.nodes.find((node) => node.type === "END")
+  const chain = chainDocument(
+    [start, ...middle, end].filter((node): node is FlowNode => Boolean(node))
+  )
+  const chainIDs = new Set(chain.nodes.map((node) => node.id))
+  return {
+    nodes: [
+      ...chain.nodes,
+      ...flowDocument.nodes.filter((node) => !chainIDs.has(node.id)),
+    ],
+    edges: chain.edges,
+  }
+}
+
 function DropSlot({
   active,
   onDragOver,
@@ -206,7 +223,7 @@ function DropSlot({
     <div
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`-my-px h-1 rounded-sm border border-dashed transition-all ${active ? "my-1 h-4 border-primary bg-primary/15" : "border-transparent"}`}
+      className={`-my-px h-1 rounded-sm border border-dashed transition-all ${active ? "my-1 h-12 rounded-r-full border-slate-400 bg-slate-400/50 dark:border-slate-500 dark:bg-slate-500/50" : "border-transparent"}`}
     />
   )
 }
@@ -233,7 +250,7 @@ function Block({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onSelect}
-      className={`relative mx-auto w-full max-w-md rounded-2xl border border-l-8 bg-background p-4 shadow-sm transition-shadow ${nodeColors[node.type] ?? "border-l-slate-500"} ${selected ? "ring-2 ring-foreground/20" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
+      className={`relative mx-auto w-full max-w-md rounded-l-md rounded-r-[2rem] border-2 p-4 text-white shadow-sm transition-shadow ${nodeColors[node.type] ?? "border-slate-600 bg-slate-500"} ${selected ? "ring-2 ring-foreground/40" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
     >
       <div className="flex items-center gap-3">
         <GripVertical className="size-4 text-muted-foreground" />
@@ -241,7 +258,10 @@ function Block({
           <p className="font-semibold">{nodeLabels[node.type] ?? node.type}</p>
           <p className="text-sm text-muted-foreground">{node.label}</p>
         </div>
-        <Badge className="ml-auto" variant="outline">
+        <Badge
+          className="ml-auto border-white/40 bg-black/10 text-white"
+          variant="outline"
+        >
           {node.type}
         </Badge>
       </div>
@@ -276,6 +296,10 @@ export function FlowEditorPage() {
   const selectedNode = document.nodes.find((node) => node.id === selectedNodeID)
   const magnetic = isMagneticDocument(document)
   const blocks = magnetic ? linearNodes(document) : document.nodes
+  const chainIDs = new Set(blocks.map((node) => node.id))
+  const looseBlocks = magnetic
+    ? document.nodes.filter((node) => !chainIDs.has(node.id))
+    : []
   useEffect(() => {
     api<{ items: PLCVariable[] }>("/api/variables?page_size=100")
       .then((result) => setVariables(result.items))
@@ -335,10 +359,10 @@ export function FlowEditorPage() {
       y: 0,
       config: configFor(newType),
     }
-    const middle = blocks.filter(
-      (item) => !["START", "END"].includes(item.type)
-    )
-    setDocument(chainDocument([...middle, node]))
+    setDocument((current) => ({
+      ...current,
+      nodes: [...current.nodes, node],
+    }))
     setSelectedNodeID(node.id)
     setDialogOpen(false)
   }
@@ -353,9 +377,18 @@ export function FlowEditorPage() {
       setError("当前流程包含分支或无效连线，磁吸排序暂不可用。")
       return
     }
-    setDocument(
-      chainDocument(blocks.filter((node) => node.id !== selectedNode.id))
-    )
+    setDocument((current) => {
+      const remaining = current.nodes.filter(
+        (node) => node.id !== selectedNode.id
+      )
+      return rebuildChain(
+        { ...current, nodes: remaining },
+        blocks.filter(
+          (node) =>
+            !["START", "END"].includes(node.type) && node.id !== selectedNode.id
+        )
+      )
+    })
     setSelectedNodeID("start")
   }
   function moveNode(fromID: string, targetIndex: number) {
@@ -369,10 +402,11 @@ export function FlowEditorPage() {
       (node) => !["START", "END"].includes(node.type)
     )
     const from = middle.findIndex((node) => node.id === fromID)
-    if (from < 0) return
-    const [node] = middle.splice(from, 1)
+    const node = document.nodes.find((item) => item.id === fromID)
+    if (!node || ["START", "END"].includes(node.type)) return
+    if (from >= 0) middle.splice(from, 1)
     middle.splice(Math.max(0, Math.min(targetIndex, middle.length)), 0, node)
-    setDocument(chainDocument(middle))
+    setDocument(rebuildChain(document, middle))
     setSelectedNodeID(node.id)
     setDraggingID(null)
     setDropIndex(null)
@@ -385,6 +419,15 @@ export function FlowEditorPage() {
     if (!editable || !draggingID) return
     event.preventDefault()
     setDropIndex(targetIndex)
+  }
+  function detachNode(nodeID: string) {
+    if (!editable || !isMagneticDocument(document)) return
+    const middle = blocks.filter(
+      (node) => !["START", "END"].includes(node.type) && node.id !== nodeID
+    )
+    setDocument(rebuildChain(document, middle))
+    setDraggingID(null)
+    setDropIndex(null)
   }
   async function save() {
     setSaving(true)
@@ -480,7 +523,7 @@ export function FlowEditorPage() {
               {flow && ` · v${flow.version}`}
             </CardTitle>
             <CardDescription>
-              磁吸积木流程编辑器：拖动积木到两个积木之间的吸附槽即可调整执行顺序，连线会自动重建。
+              流程积木编辑器：拖动积木到灰色吸附位即可接入或调整执行顺序，未吸附的积木可以独立放置。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -597,6 +640,43 @@ export function FlowEditorPage() {
                         onSelect={() => setSelectedNodeID(node.id)}
                       />
                     ))}
+                  </div>
+                )}
+                {magnetic && (
+                  <div
+                    onDragOver={(event) => {
+                      if (!editable || !draggingID) return
+                      event.preventDefault()
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      if (draggingID) detachNode(draggingID)
+                    }}
+                    className="mt-8 min-h-28 rounded-xl border-2 border-dashed border-muted-foreground/25 bg-muted/20 p-4"
+                  >
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      零散流程块 · 拖到灰色吸附位即可接入流程
+                    </p>
+                    <div className="flex flex-wrap gap-3">
+                      {looseBlocks.map((node) => (
+                        <div key={node.id} className="w-full max-w-md">
+                          <Block
+                            node={node}
+                            selected={selectedNodeID === node.id}
+                            draggable={editable}
+                            onSelect={() => setSelectedNodeID(node.id)}
+                            onDragStart={() => {
+                              setDraggingID(node.id)
+                              setSelectedNodeID(node.id)
+                            }}
+                            onDragEnd={() => {
+                              setDraggingID(null)
+                              setDropIndex(null)
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
                 <div className="mt-5 flex justify-center">
@@ -788,7 +868,7 @@ export function FlowEditorPage() {
           <DialogHeader>
             <DialogTitle>新增流程</DialogTitle>
             <DialogDescription>
-              选择流程节点类型。创建后会吸附到流程末端，再拖到任意吸附槽调整顺序。
+              选择流程节点类型。创建后会放入零散流程块区域，再拖到灰色吸附位接入流程。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
