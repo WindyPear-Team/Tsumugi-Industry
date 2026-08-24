@@ -461,7 +461,7 @@ export function FlowEditorPage() {
   function syncDocument() { const workspace = workspaceRef.current; if (!workspace) return documentRef.current; const next = documentFromWorkspace(workspace); documentRef.current = next; setDocument(next); return next }
   async function save() {
     setSaving(true)
-    try { const definition = syncDocument(); const result = await api<{ flow: FlowDefinition }>(isNew ? "/api/flows" : `/api/flows/${id}`, { method: isNew ? "POST" : "PUT", body: JSON.stringify({ ...form, timeout_seconds: Number(form.timeout_seconds), definition: JSON.stringify(definition) }) }); setFlow(result.flow); navigate(`/flows/${result.flow.id}/edit`, { replace: true }); setError("") }
+    try { const definition = syncDocument(); const result = await api<{ flow: FlowDefinition }>(isNew ? "/api/flows" : `/api/flows/${id}`, { method: isNew ? "POST" : "PUT", body: JSON.stringify({ ...form, timeout_seconds: Number(form.timeout_seconds), definition }) }); setFlow(result.flow); navigate(`/flows/${result.flow.id}/edit`, { replace: true }); setError("") }
     catch (err) { setError(err instanceof Error ? err.message : "保存流程失败") } finally { setSaving(false) }
   }
   async function validate() {

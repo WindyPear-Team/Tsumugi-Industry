@@ -504,10 +504,16 @@ func (r *Router) validateFlowDocument(document flowDocument) []string {
 
 func decodeFlowDocument(data []byte) (flowDocument, error) {
 	var document flowDocument
-	if err := json.Unmarshal(data, &document); err != nil {
-		return document, fmt.Errorf("流程定义不是有效 JSON：%w", err)
+	if err := json.Unmarshal(data, &document); err == nil {
+		return document, nil
 	}
-	return document, nil
+	var encoded string
+	if err := json.Unmarshal(data, &encoded); err == nil {
+		if nestedErr := json.Unmarshal([]byte(encoded), &document); nestedErr == nil {
+			return document, nil
+		}
+	}
+	return document, fmt.Errorf("流程定义不是有效 JSON")
 }
 func uniqueStrings(values []string) []string {
 	seen := map[string]bool{}
