@@ -58,6 +58,7 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		&models.FlowDefinition{},
 		&models.FlowRun{},
 		&models.FlowNodeRun{},
+		&models.FlowFunction{},
 		&models.MonitorItem{},
 		&models.MonitorRecord{},
 		&models.Dashboard{},

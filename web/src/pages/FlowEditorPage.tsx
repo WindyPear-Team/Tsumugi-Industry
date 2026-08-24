@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react"
 import * as Blockly from "blockly"
 import "blockly/blocks"
 import * as ZhHans from "blockly/msg/zh-hans"
-import { ArrowLeft, Check, Loader2, Save, Send } from "lucide-react"
+import { ArrowLeft, Check, Loader2, Save, Send, Settings2 } from "lucide-react"
 import { useNavigate, useParams } from "react-router-dom"
-import { api, type FlowDefinition, type FlowDocument, type FlowFunction, type FlowNode, type FlowParameter, type PLC, type PLCVariable } from "@/lib/api"
+import { api, type FlowDefinition, type FlowDocument, type FlowFunction, type FlowNode, type PLC, type PLCVariable } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 const nodeTypes = ["SET", "GET", "WAIT", "IF", "SWITCH", "VAR_SET", "CALCULATE", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW", "FUNCTION_CALL"] as const
 const nodeLabels: Record<string, string> = {
@@ -433,7 +434,9 @@ export function FlowEditorPage() {
   const [flow, setFlow] = useState<FlowDefinition | null>(null)
   const [document, setDocument] = useState<FlowDocument>(clone(emptyDocument))
   const [form, setForm] = useState<FlowForm>({ code: "FLOW-001", name: "新流程", description: "", timeout_seconds: "0" })
-  const [functionDraft, setFunctionDraft] = useState({ name: "", return_type: "none" as FlowFunction["return_type"], parameters: "" })
+  const [resourceMode, setResourceMode] = useState<"variables" | "options" | null>(null)
+  const [variableDraft, setVariableDraft] = useState({ name: "", type: "string", default_value: "" })
+  const [optionDraft, setOptionDraft] = useState("")
   const [issues, setIssues] = useState<string[]>([]); const [error, setError] = useState(""); const [saving, setSaving] = useState(false); const [loading, setLoading] = useState(!isNew); const [workspaceReady, setWorkspaceReady] = useState(isNew); const [referencesReady, setReferencesReady] = useState(false)
   const hostRef = useRef<HTMLDivElement>(null); const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null); const documentRef = useRef(document); const hydratingRef = useRef(false)
   const editable = !flow || flow.status === "draft"
@@ -443,7 +446,8 @@ export function FlowEditorPage() {
       api<{ items: PLC[] }>("/api/plcs?page_size=100"),
       api<{ items: PLCVariable[] }>("/api/variables?page_size=100"),
       api<{ items: FlowDefinition[] }>("/api/flows?page_size=100&filter_status=published"),
-    ]).then(([plcResult, variableResult, flowResult]) => {
+      api<{ items: FlowFunction[] }>("/api/flow-functions"),
+    ]).then(([plcResult, variableResult, flowResult, functionResult]) => {
       plcOptions = plcResult.items.map((plc) => [`${plc.name} · ${plc.code}`, String(plc.id)])
       variablesByPLC = new Map<string, PLCVariable[]>()
       for (const variable of variableResult.items) {
@@ -451,8 +455,7 @@ export function FlowEditorPage() {
         variablesByPLC.set(key, [...(variablesByPLC.get(key) ?? []), variable])
       }
       flowOptions = flowResult.items.map((item) => [`${item.name} · ${item.code}`, item.code])
-      const loadedFunctions = documentRef.current.functions ?? []
-      functionOptions = loadedFunctions.map((item) => [`${item.name} · ${item.code}`, item.code])
+      functionOptions = functionResult.items.map((item) => [`${item.name} · ${item.code}`, item.code])
       predefinedOptions = (documentRef.current.options ?? []).map((item) => [item, item])
     }).catch(() => {
       plcOptions = [["暂无可用 PLC", ""]]
@@ -462,16 +465,15 @@ export function FlowEditorPage() {
     if (isNew) return
     api<{ flow: FlowDefinition }>(`/api/flows/${id}`).then((result) => {
       const loaded = JSON.parse(result.flow.definition) as FlowDocument
-      setFlow(result.flow); setForm({ code: result.flow.code, name: result.flow.name, description: result.flow.description, timeout_seconds: String(result.flow.timeout_seconds) }); setDocument(loaded); documentRef.current = loaded; functionOptions = (loaded.functions ?? []).map((item) => [`${item.name} · ${item.code}`, item.code]); setWorkspaceReady(true)
+      setFlow(result.flow); setForm({ code: result.flow.code, name: result.flow.name, description: result.flow.description, timeout_seconds: String(result.flow.timeout_seconds) }); setDocument(loaded); documentRef.current = loaded; predefinedOptions = (loaded.options ?? []).map((item) => [item, item]); setWorkspaceReady(true)
     }).catch((err) => setError(err instanceof Error ? err.message : "加载流程失败")).finally(() => setLoading(false))
   }, [id, isNew])
   function updateDocumentMetadata(update: Partial<FlowDocument>) { setDocument((current) => { const next = { ...current, ...update }; documentRef.current = next; return next }) }
-  function addFunction() {
-    const name = functionDraft.name.trim(); if (!name) return
-    const params: FlowParameter[] = functionDraft.parameters.split(",").map((item) => item.trim()).filter(Boolean).map((item) => { const [paramName, type = "string"] = item.split(":"); return { name: paramName.trim(), type: (type.trim() as FlowParameter["type"]) || "string", required: true } })
-    const fn: FlowFunction = { name, code: `FN_${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_${Date.now().toString(36)}`, return_type: functionDraft.return_type, parameters: params }
-    const functions = [...(documentRef.current.functions ?? []), fn]; functionOptions = functions.map((item) => [`${item.name} · ${item.code}`, item.code]); updateDocumentMetadata({ functions }); setFunctionDraft({ name: "", return_type: "none", parameters: "" })
-  }
+  function saveVariable() { if (!variableDraft.name.trim()) return; const variables = [...(documentRef.current.variables ?? []).filter((item) => item.name !== variableDraft.name.trim()), { name: variableDraft.name.trim(), type: variableDraft.type, default_value: variableDraft.default_value }]; updateDocumentMetadata({ variables }); setVariableDraft({ name: "", type: "string", default_value: "" }) }
+  function editVariable(name: string) { const item = (documentRef.current.variables ?? []).find((entry) => entry.name === name); if (item) setVariableDraft({ name: item.name, type: item.type, default_value: item.default_value ?? "" }) }
+  function removeVariable(name: string) { updateDocumentMetadata({ variables: (documentRef.current.variables ?? []).filter((item) => item.name !== name) }) }
+  function saveOption() { const value = optionDraft.trim(); if (!value) return; const options = [...new Set([...(documentRef.current.options ?? []), value])]; predefinedOptions = options.map((item) => [item, item]); updateDocumentMetadata({ options }); setOptionDraft("") }
+  function removeOption(value: string) { updateDocumentMetadata({ options: (documentRef.current.options ?? []).filter((item) => item !== value) }) }
   useEffect(() => {
     if (!workspaceReady || !referencesReady || !hostRef.current || workspaceRef.current) return
     defineFlowBlocks(); Blockly.setLocale(ZhHans as unknown as Record<string, string>)
@@ -514,13 +516,10 @@ export function FlowEditorPage() {
     <div className="flex items-center justify-between"><Button variant="ghost" onClick={() => navigate("/flows")}><ArrowLeft />返回流程清单</Button><div className="flex gap-2"><Button variant="outline" disabled={!editable || saving} onClick={() => void save()}><Save />保存</Button>{flow && editable && <><Button variant="outline" onClick={() => void validate()}><Check />校验</Button><Button onClick={() => void publish()}><Send />发布</Button></>}</div></div>
     <Card className="border-border/70 shadow-none"><CardHeader><CardTitle>{form.name || "新流程"}{flow && ` · v${flow.version}`}</CardTitle><CardDescription>Blockly 流程编辑器：从左侧工具箱拖入积木，连接点会自动吸附；条件块的“满足”和“否则”分支支持继续嵌套。</CardDescription></CardHeader><CardContent>
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div className="space-y-2"><Label>流程编码</Label><Input disabled={!editable} value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} /></div><div className="space-y-2"><Label>流程名称</Label><Input disabled={!editable} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div><div className="space-y-2"><Label>总超时（秒）</Label><Input disabled={!editable} type="number" min="0" value={form.timeout_seconds} onChange={(event) => setForm({ ...form, timeout_seconds: event.target.value })} /></div><div className="space-y-2"><Label>描述</Label><Input disabled={!editable} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div></div>
-      <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        <div className="space-y-2 rounded-lg border p-3"><Label>流程变量</Label><Input disabled={!editable} placeholder="例如：目标温度:number, 批次号:string" value={(document.variables ?? []).map((item) => `${item.name}:${item.type}`).join(", ")} onChange={(event) => updateDocumentMetadata({ variables: event.target.value.split(",").map((item) => item.trim()).filter(Boolean).map((item) => { const [name, type = "string"] = item.split(":"); return { name: name.trim(), type: type.trim() } }) })} /><p className="text-xs text-muted-foreground">变量会作为新建工单的填写项；类型支持 number、string、boolean。</p></div>
-        <div className="space-y-2 rounded-lg border p-3"><Label>流程内置下拉项</Label><Input disabled={!editable} placeholder="例如：加热炉A, 加热炉B, 自动, 手动" value={(document.options ?? []).join(", ")} onChange={(event) => { const options = event.target.value.split(",").map((item) => item.trim()).filter(Boolean); predefinedOptions = options.map((item) => [item, item]); updateDocumentMetadata({ options }) }} /><p className="text-xs text-muted-foreground">函数参数的 option/device 选择值从这里维护，积木和工单拿到字符串。</p></div>
-      </div>
-      <div className="mb-4 rounded-lg border p-3"><div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-medium">流程函数</p><p className="text-xs text-muted-foreground">参数格式：参数名:类型，类型支持 number、string、boolean、device、option。</p></div><Button type="button" size="sm" variant="outline" disabled={!editable} onClick={addFunction}>新增函数</Button></div><div className="grid gap-2 sm:grid-cols-[1fr_130px_1fr]"> <Input disabled={!editable} placeholder="函数名称，例如：升温" value={functionDraft.name} onChange={(event) => setFunctionDraft({ ...functionDraft, name: event.target.value })} /><select disabled={!editable} className="h-9 rounded-md border bg-background px-3 text-sm" value={functionDraft.return_type} onChange={(event) => setFunctionDraft({ ...functionDraft, return_type: event.target.value as FlowFunction["return_type"] })}><option value="none">无返回值（语句积木）</option><option value="number">返回数字</option><option value="string">返回字符串</option><option value="boolean">返回布尔值</option></select><Input disabled={!editable} placeholder="温度:number, 设备:device" value={functionDraft.parameters} onChange={(event) => setFunctionDraft({ ...functionDraft, parameters: event.target.value })} /></div>{(document.functions ?? []).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{document.functions?.map((item) => <span className="rounded-full bg-muted px-2 py-1 text-xs" key={item.code}>{item.name} · {item.return_type === "none" ? "无返回值" : `返回${item.return_type}`} · {item.parameters.map((param) => param.name).join("、") || "无参数"}</span>)}</div>}</div>
+      <div className="mb-4 grid gap-3 sm:grid-cols-3"><Button type="button" variant="outline" disabled={!editable} onClick={() => setResourceMode("variables")}><Settings2 />管理流程变量（{document.variables?.length ?? 0}）</Button><Button type="button" variant="outline" disabled={!editable} onClick={() => setResourceMode("options")}><Settings2 />管理下拉项（{document.options?.length ?? 0}）</Button><Button type="button" variant="outline" onClick={() => navigate("/flow-functions")}><Settings2 />管理全局流程函数</Button></div>
       <div ref={hostRef} className={`blockly-editor ${editable ? "" : "pointer-events-none opacity-75"}`} aria-label="Blockly 流程工作区" />
       {issues.length > 0 && <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><ul className="list-disc pl-5">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}{error && <p className="mt-3 text-sm text-destructive">{error}</p>}
     </CardContent></Card>
+    <Dialog open={resourceMode !== null} onOpenChange={(open) => !open && setResourceMode(null)}><DialogContent><DialogHeader><DialogTitle>{resourceMode === "variables" ? "管理流程变量" : "管理流程下拉项"}</DialogTitle><DialogDescription>这里定义的项会保存到当前流程，工单和流程函数积木使用字符串值。</DialogDescription></DialogHeader>{resourceMode === "variables" ? <div className="space-y-4"><div className="grid gap-2 sm:grid-cols-3"><Input placeholder="变量名" value={variableDraft.name} onChange={(event) => setVariableDraft({ ...variableDraft, name: event.target.value })} /><select className="h-9 rounded-md border bg-background px-3 text-sm" value={variableDraft.type} onChange={(event) => setVariableDraft({ ...variableDraft, type: event.target.value })}><option value="string">string</option><option value="select">select</option><option value="number">number</option><option value="boolean">boolean</option></select><Input placeholder="默认值" value={variableDraft.default_value} onChange={(event) => setVariableDraft({ ...variableDraft, default_value: event.target.value })} /></div><Button type="button" onClick={saveVariable}>添加/保存变量</Button><div className="space-y-2">{(document.variables ?? []).map((item) => <div className="flex items-center justify-between rounded border p-2 text-sm" key={item.name}><span>{item.name} · {item.type}</span><span className="flex gap-1"><Button type="button" size="sm" variant="ghost" onClick={() => editVariable(item.name)}>编辑</Button><Button type="button" size="sm" variant="ghost" onClick={() => removeVariable(item.name)}>删除</Button></span></div>)}</div></div> : <div className="space-y-4"><div className="flex gap-2"><Input placeholder="下拉项值" value={optionDraft} onChange={(event) => setOptionDraft(event.target.value)} /><Button type="button" onClick={saveOption}>添加</Button></div><div className="flex flex-wrap gap-2">{(document.options ?? []).map((item) => <Button type="button" size="sm" variant="outline" key={item} onClick={() => removeOption(item)}>{item} ×</Button>)}</div></div>}<DialogFooter><Button variant="outline" onClick={() => setResourceMode(null)}>完成</Button></DialogFooter></DialogContent></Dialog>
   </div>
 }

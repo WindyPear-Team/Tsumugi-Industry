@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom"
-import { Activity, CircleGauge, ClipboardList, Cpu, Database, FileClock, History, KeyRound, LayoutDashboard, Network, Settings2, ShieldCheck, SlidersHorizontal, Users, Wrench } from "lucide-react"
+import { Activity, CircleGauge, ClipboardList, Cpu, Database, FileClock, History, KeyRound, LayoutDashboard, Network, Settings2, ShieldCheck, SlidersHorizontal, SquareFunction, Users, Wrench } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ const items = [
   { id: "overview", path: "/", label: "运行总览", icon: CircleGauge, group: "工作台" },
   { id: "work-orders", path: "/work-orders", label: "生产工单", icon: ClipboardList, group: "生产执行" },
   { id: "flows", path: "/flows", label: "流程定义", icon: Network, group: "工程配置" },
+  { id: "flow-functions", path: "/flow-functions", label: "流程函数", icon: SquareFunction, group: "工程配置" },
   { id: "variables", path: "/variables", label: "PLC 变量", icon: SlidersHorizontal, group: "工程配置" },
   { id: "monitoring", path: "/monitoring", label: "监控曲线", icon: Activity, group: "工作台" },
   { id: "dashboards", path: "/dashboards", label: "运行看板", icon: LayoutDashboard, group: "工作台" },

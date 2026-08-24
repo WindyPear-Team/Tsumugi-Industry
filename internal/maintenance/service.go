@@ -75,6 +75,7 @@ func (s *Service) CreateBackup(createdBy string) (models.Backup, error) {
 	var flows []models.FlowDefinition
 	var flowRuns []models.FlowRun
 	var flowNodeRuns []models.FlowNodeRun
+	var flowFunctions []models.FlowFunction
 	var monitorItems []models.MonitorItem
 	var monitorRecords []models.MonitorRecord
 	var dashboards []models.Dashboard
@@ -90,11 +91,12 @@ func (s *Service) CreateBackup(createdBy string) (models.Backup, error) {
 	s.db.Find(&flows)
 	s.db.Find(&flowRuns)
 	s.db.Find(&flowNodeRuns)
+	s.db.Find(&flowFunctions)
 	s.db.Find(&monitorItems)
 	s.db.Find(&monitorRecords)
 	s.db.Find(&dashboards)
 	s.db.Find(&dashboardWidgets)
-	payload := map[string]any{"settings": settings, "users": users, "roles": roles, "permissions": permissions, "devices": devices, "work_orders": workOrders, "work_order_steps": workOrderSteps, "production_events": productionEvents, "variables": variables, "flows": flows, "flow_runs": flowRuns, "flow_node_runs": flowNodeRuns, "monitor_items": monitorItems, "monitor_records": monitorRecords, "dashboards": dashboards, "dashboard_widgets": dashboardWidgets}
+	payload := map[string]any{"settings": settings, "users": users, "roles": roles, "permissions": permissions, "devices": devices, "work_orders": workOrders, "work_order_steps": workOrderSteps, "production_events": productionEvents, "variables": variables, "flows": flows, "flow_runs": flowRuns, "flow_node_runs": flowNodeRuns, "flow_functions": flowFunctions, "monitor_items": monitorItems, "monitor_records": monitorRecords, "dashboards": dashboards, "dashboard_widgets": dashboardWidgets}
 	content, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return models.Backup{}, err
@@ -125,6 +127,7 @@ func (s *Service) RestoreBackup(backup models.Backup) error {
 		Flows            []models.FlowDefinition  `json:"flows"`
 		FlowRuns         []models.FlowRun         `json:"flow_runs"`
 		FlowNodeRuns     []models.FlowNodeRun     `json:"flow_node_runs"`
+		FlowFunctions    []models.FlowFunction    `json:"flow_functions"`
 		MonitorItems     []models.MonitorItem     `json:"monitor_items"`
 		MonitorRecords   []models.MonitorRecord   `json:"monitor_records"`
 		Dashboards       []models.Dashboard       `json:"dashboards"`
@@ -191,6 +194,11 @@ func (s *Service) RestoreBackup(backup models.Backup) error {
 		}
 		for _, nodeRun := range payload.FlowNodeRuns {
 			if err := tx.Save(&nodeRun).Error; err != nil {
+				return err
+			}
+		}
+		for _, function := range payload.FlowFunctions {
+			if err := tx.Save(&function).Error; err != nil {
 				return err
 			}
 		}

@@ -235,6 +235,18 @@ type FlowDefinition struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+type FlowFunction struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	Code        string    `json:"code" gorm:"size:64;uniqueIndex;not null"`
+	Name        string    `json:"name" gorm:"size:128;not null"`
+	Description string    `json:"description" gorm:"type:text"`
+	ReturnType  string    `json:"return_type" gorm:"size:16;not null;default:none"`
+	Parameters  string    `json:"parameters" gorm:"type:text"`
+	Definition  string    `json:"definition" gorm:"type:text"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 // MonitorItem describes a PLC variable sampling plan. Samples are kept
 // separately so charts can be queried without changing the semantic variable.
 type MonitorItem struct {
