@@ -4,7 +4,7 @@ import "blockly/blocks"
 import * as ZhHans from "blockly/msg/zh-hans"
 import { ArrowLeft, Check, Loader2, Save, Send, Settings2 } from "lucide-react"
 import { useNavigate, useParams } from "react-router-dom"
-import { api, type FlowDefinition, type FlowDocument, type FlowFunction, type FlowNode, type PLC, type PLCVariable } from "@/lib/api"
+import { api, type FlowDefinition, type FlowDocument, type FlowFunction, type FlowNode, type PLC, type PLCVariable, type FlowParameter } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -21,7 +21,7 @@ let plcOptions: [string, string][] = [["请先配置 PLC", ""]]
 let variablesByPLC = new Map<string, PLCVariable[]>()
 let flowOptions: [string, string][] = [["请先配置已发布子流程", ""]]
 let functionOptions: [string, string][] = [["请先新建流程函数", ""]]
-let predefinedOptions: [string, string][] = [["请先定义下拉项", ""]]
+let functionsByCode = new Map<string, FlowFunction>()
 const emptyDocument: FlowDocument = {
   nodes: [
     { id: "start", type: "START", label: "开始", x: 80, y: 40, config: {} },
@@ -59,7 +59,42 @@ function flowFieldOptions(): [string, string][] {
   return flowOptions.length > 0 ? flowOptions : [["请先配置已发布子流程", ""]]
 }
 function customFunctionOptions(): [string, string][] { return functionOptions.length > 0 ? functionOptions : [["请先新建流程函数", ""]] }
-function predefinedFieldOptions(): [string, string][] { return predefinedOptions.length > 0 ? predefinedOptions : [["请先定义下拉项", ""]] }
+
+function functionParameters(block: Blockly.Block): FlowParameter[] {
+  const code = String(block.getFieldValue("FUNCTION") ?? "")
+  const fn = functionsByCode.get(code)
+  if (!fn) return code ? [1, 2, 3, 4].map((index) => ({ name: `参数${index}`, type: "string" as const })) : []
+  if (Array.isArray(fn.parameters)) return fn.parameters
+  try { return JSON.parse(fn.parameters) as FlowParameter[] } catch { return [] }
+}
+
+function functionArgumentOptions(parameter: FlowParameter): [string, string][] {
+  return parameter.options?.length ? parameter.options.map((option) => [option, option]) : [["请配置下拉项", ""]]
+}
+
+function updateFunctionCallShape(block: Blockly.Block) {
+  const parameters = functionParameters(block)
+  for (let index = 1; index <= 20; index++) { block.removeInput(`ARG_${index}`, true); block.removeInput(`ARG_VALUE_${index}`, true) }
+  parameters.forEach((parameter, index) => {
+    const inputName = `ARG_${index + 1}`
+    if (parameter.type === "select" || parameter.type === "device" || parameter.type === "option") {
+      block.appendDummyInput(inputName).appendField(parameter.name).appendField(new Blockly.FieldDropdown(() => functionArgumentOptions(parameter)), `ARG_VALUE_${index + 1}`)
+    } else {
+      block.appendValueInput(inputName).appendField(parameter.name)
+    }
+  })
+  if (block.rendered && block instanceof Blockly.BlockSvg) block.render()
+}
+
+function setFunctionBlockChangeHandler(block: Blockly.Block) {
+  block.setOnChange((event) => { if (event instanceof Blockly.Events.BlockChange && event.blockId === block.id && event.name === "FUNCTION") updateFunctionCallShape(block) })
+}
+
+function functionArgumentsFromBlock(block: Blockly.Block): unknown[] {
+  return functionParameters(block).map((parameter, index) => parameter.type === "select" || parameter.type === "device" || parameter.type === "option"
+    ? block.getFieldValue(`ARG_VALUE_${index + 1}`) ?? ""
+    : expressionFromBlock(block.getInput(`ARG_${index + 1}`)?.connection?.targetBlock()) ?? "")
+}
 
 function defineFlowBlocks() {
   if (Blockly.Blocks.flow_if) return
@@ -72,7 +107,7 @@ function defineFlowBlocks() {
     flow_compare: { init(this: Blockly.Block) { this.appendValueInput("LEFT").appendField("比较"); this.appendDummyInput().appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP"); this.appendValueInput("RIGHT"); this.setOutput(true, "Boolean"); this.setColour(195); this.setTooltip("比较两个数字或字符串") } },
     flow_to_number: { init(this: Blockly.Block) { this.appendValueInput("VALUE").appendField("转数字"); this.setOutput(true, "Number"); this.setColour(45) } },
     flow_to_string: { init(this: Blockly.Block) { this.appendValueInput("VALUE").appendField("转字符串"); this.setOutput(true, "String"); this.setColour(45) } },
-    flow_function_value: { init(this: Blockly.Block) { this.appendDummyInput().appendField("函数返回值").appendField(new Blockly.FieldDropdown(() => customFunctionOptions()), "FUNCTION").appendField("下拉项").appendField(new Blockly.FieldDropdown(() => predefinedFieldOptions()), "OPTION"); this.appendValueInput("ARG_1").appendField("参数1"); this.appendValueInput("ARG_2").appendField("参数2"); this.appendValueInput("ARG_3").appendField("参数3"); this.appendValueInput("ARG_4").appendField("参数4"); this.setOutput(true); this.setColour(290); this.setTooltip("调用有返回值的流程函数") } },
+    flow_function_value: { init(this: Blockly.Block) { this.appendDummyInput().appendField("函数返回值").appendField(new Blockly.FieldDropdown(() => customFunctionOptions()), "FUNCTION"); this.setOutput(true); this.setColour(290); this.setTooltip("调用有返回值的流程函数"); setFunctionBlockChangeHandler(this); updateFunctionCallShape(this) } },
     flow_if: { init(this: Blockly.Block) {
       this.appendDummyInput().appendField("如果").appendField(new Blockly.FieldDropdown([["PLC变量", "plc"], ["内部变量", "internal"]]), "SOURCE").appendField("PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField("内部").appendField(new Blockly.FieldVariable("counter"), "INTERNAL_VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
       this.appendStatementInput("TRUE").appendField("满足")
@@ -126,8 +161,8 @@ function defineFlowBlocks() {
         this.appendStatementInput("BRANCH_A").appendField("分支一")
         this.appendStatementInput("BRANCH_B").appendField("分支二")
       } else if (type === "FUNCTION_CALL") {
-        this.appendDummyInput().appendField("调用函数").appendField(new Blockly.FieldDropdown(() => customFunctionOptions()), "FUNCTION").appendField("下拉项").appendField(new Blockly.FieldDropdown(() => predefinedFieldOptions()), "OPTION")
-        this.appendValueInput("ARG_1").appendField("参数1"); this.appendValueInput("ARG_2").appendField("参数2"); this.appendValueInput("ARG_3").appendField("参数3"); this.appendValueInput("ARG_4").appendField("参数4")
+        this.appendDummyInput().appendField("调用函数").appendField(new Blockly.FieldDropdown(() => customFunctionOptions()), "FUNCTION")
+        setFunctionBlockChangeHandler(this); updateFunctionCallShape(this)
       } else {
         this.appendDummyInput().appendField(nodeLabels[type])
       }
@@ -193,7 +228,7 @@ function expressionFromBlock(block?: Blockly.Block | null): unknown {
   }
   if (block.type === "flow_compare") return { kind: "compare", operator: block.getFieldValue("OP") || "==", left: expressionFromBlock(block.getInput("LEFT")?.connection?.targetBlock()) ?? 0, right: expressionFromBlock(block.getInput("RIGHT")?.connection?.targetBlock()) ?? 0 }
   if (block.type === "flow_to_number" || block.type === "flow_to_string") return { kind: block.type === "flow_to_number" ? "to_number" : "to_string", value: expressionFromBlock(block.getInput("VALUE")?.connection?.targetBlock()) ?? "" }
-  if (block.type === "flow_function_value") return { kind: "function", code: block.getFieldValue("FUNCTION") ?? "", option: block.getFieldValue("OPTION") ?? "", args: ["ARG_1", "ARG_2", "ARG_3", "ARG_4"].map((name) => expressionFromBlock(block.getInput(name)?.connection?.targetBlock())).filter((value) => value !== undefined) }
+  if (block.type === "flow_function_value") return { kind: "function", code: block.getFieldValue("FUNCTION") ?? "", args: functionArgumentsFromBlock(block) }
   if (block.type === "math_number") return Number(block.getFieldValue("NUM") ?? 0)
   if (block.type === "logic_boolean") return block.getFieldValue("BOOL") === "TRUE"
   if (block.type === "text") return block.getFieldValue("TEXT") ?? ""
@@ -253,8 +288,7 @@ function configFromBlock(block: Blockly.Block, type: string) {
   if (type === "MANUAL_CONFIRM") config.message = field("MESSAGE") ?? "请确认"
   if (type === "FUNCTION_CALL") {
     config.function = field("FUNCTION") ?? ""
-    config.option = field("OPTION") ?? ""
-    config.args = ["ARG_1", "ARG_2", "ARG_3", "ARG_4"].map((name) => expressionFromInput(block, name, undefined)).filter((value) => value !== undefined)
+    config.args = functionArgumentsFromBlock(block)
   }
   return config
 }
@@ -318,7 +352,15 @@ function hydrateBlockConfig(block: Blockly.Block, node: FlowNode) {
   set("MESSAGE", config.message)
   set("LEVEL", config.level)
   set("FUNCTION", config.function)
-  set("OPTION", config.option)
+  if (block.type === "flow_function_call" || block.type === "flow_function_value") {
+    updateFunctionCallShape(block)
+    const parameters = functionParameters(block)
+    const args = Array.isArray(config.args) ? config.args : []
+    parameters.forEach((parameter, index) => {
+      const value = args[index]
+      if (parameter.type === "select" || parameter.type === "device" || parameter.type === "option") set(`ARG_VALUE_${index + 1}`, value)
+    })
+  }
 }
 
 function hydrateExpression(workspace: Blockly.WorkspaceSvg, input: Blockly.Input | null, expression: unknown) {
@@ -357,6 +399,18 @@ function hydrateExpression(workspace: Blockly.WorkspaceSvg, input: Blockly.Input
       hydrateExpression(workspace, mathBlock.getInput("LEFT"), object.left)
       hydrateExpression(workspace, mathBlock.getInput("RIGHT"), object.right)
       return mathBlock
+    }
+    if (object.kind === "function") {
+      const functionBlock = workspace.newBlock("flow_function_value")
+      functionBlock.setFieldValue(String(object.code ?? ""), "FUNCTION")
+      updateFunctionCallShape(functionBlock)
+      functionBlock.initSvg(); functionBlock.render()
+      const args = Array.isArray(object.args) ? object.args : []
+      functionParameters(functionBlock).forEach((parameter, index) => {
+        if (parameter.type === "select" || parameter.type === "device" || parameter.type === "option") functionBlock.setFieldValue(String(args[index] ?? ""), `ARG_VALUE_${index + 1}`)
+        else hydrateExpression(workspace, functionBlock.getInput(`ARG_${index + 1}`), args[index])
+      })
+      return functionBlock
     }
     return null
   }
@@ -399,6 +453,10 @@ function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDo
     hydrateExpression(workspace, block.getInput("VALUE"), node.config?.value)
     hydrateExpression(workspace, block.getInput("LEFT"), node.config?.left)
     hydrateExpression(workspace, block.getInput("RIGHT"), node.config?.right)
+    if (node.type === "FUNCTION_CALL" && Array.isArray(node.config?.args)) {
+      const args = node.config.args
+      functionParameters(block).forEach((parameter, index) => { if (parameter.type !== "select" && parameter.type !== "device" && parameter.type !== "option") hydrateExpression(workspace, block.getInput(`ARG_${index + 1}`), args[index]) })
+    }
   }
   for (const edge of document.edges) {
     const source = blocks.get(edge.source); const target = blocks.get(edge.target)
@@ -456,7 +514,7 @@ export function FlowEditorPage() {
       }
       flowOptions = flowResult.items.map((item) => [`${item.name} · ${item.code}`, item.code])
       functionOptions = functionResult.items.map((item) => [`${item.name} · ${item.code}`, item.code])
-      predefinedOptions = (documentRef.current.options ?? []).map((item) => [item, item])
+      functionsByCode = new Map(functionResult.items.map((item) => [item.code, item]))
     }).catch(() => {
       plcOptions = [["暂无可用 PLC", ""]]
     }).finally(() => setReferencesReady(true))
@@ -465,14 +523,14 @@ export function FlowEditorPage() {
     if (isNew) return
     api<{ flow: FlowDefinition }>(`/api/flows/${id}`).then((result) => {
       const loaded = JSON.parse(result.flow.definition) as FlowDocument
-      setFlow(result.flow); setForm({ code: result.flow.code, name: result.flow.name, description: result.flow.description, timeout_seconds: String(result.flow.timeout_seconds) }); setDocument(loaded); documentRef.current = loaded; predefinedOptions = (loaded.options ?? []).map((item) => [item, item]); setWorkspaceReady(true)
+      setFlow(result.flow); setForm({ code: result.flow.code, name: result.flow.name, description: result.flow.description, timeout_seconds: String(result.flow.timeout_seconds) }); setDocument(loaded); documentRef.current = loaded; setWorkspaceReady(true)
     }).catch((err) => setError(err instanceof Error ? err.message : "加载流程失败")).finally(() => setLoading(false))
   }, [id, isNew])
   function updateDocumentMetadata(update: Partial<FlowDocument>) { setDocument((current) => { const next = { ...current, ...update }; documentRef.current = next; return next }) }
   function saveVariable() { if (!variableDraft.name.trim()) return; const variables = [...(documentRef.current.variables ?? []).filter((item) => item.name !== variableDraft.name.trim()), { name: variableDraft.name.trim(), type: variableDraft.type, default_value: variableDraft.default_value }]; updateDocumentMetadata({ variables }); setVariableDraft({ name: "", type: "string", default_value: "" }) }
   function editVariable(name: string) { const item = (documentRef.current.variables ?? []).find((entry) => entry.name === name); if (item) setVariableDraft({ name: item.name, type: item.type, default_value: item.default_value ?? "" }) }
   function removeVariable(name: string) { updateDocumentMetadata({ variables: (documentRef.current.variables ?? []).filter((item) => item.name !== name) }) }
-  function saveOption() { const value = optionDraft.trim(); if (!value) return; const options = [...new Set([...(documentRef.current.options ?? []), value])]; predefinedOptions = options.map((item) => [item, item]); updateDocumentMetadata({ options }); setOptionDraft("") }
+  function saveOption() { const value = optionDraft.trim(); if (!value) return; const options = [...new Set([...(documentRef.current.options ?? []), value])]; updateDocumentMetadata({ options }); setOptionDraft("") }
   function removeOption(value: string) { updateDocumentMetadata({ options: (documentRef.current.options ?? []).filter((item) => item !== value) }) }
   useEffect(() => {
     if (!workspaceReady || !referencesReady || !hostRef.current || workspaceRef.current) return
