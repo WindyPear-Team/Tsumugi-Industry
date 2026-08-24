@@ -95,19 +95,44 @@ func (r *Router) saveDashboard(item *models.Dashboard, widgets []dashboardWidget
 		if err := tx.Save(item).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("dashboard_id = ?", item.ID).Delete(&models.DashboardWidget{}).Error; err != nil {
+		var existing []models.DashboardWidget
+		if err := tx.Where("dashboard_id = ?", item.ID).Find(&existing).Error; err != nil {
 			return err
 		}
+		existingByID := make(map[uint]*models.DashboardWidget, len(existing))
+		for index := range existing {
+			existingByID[existing[index].ID] = &existing[index]
+		}
+		keptIDs := make([]uint, 0, len(widgets))
 		for _, widget := range widgets {
 			config, err := json.Marshal(widget.Config)
 			if err != nil {
 				return err
 			}
-			if err := tx.Create(&models.DashboardWidget{DashboardID: item.ID, WidgetType: widget.WidgetType, Title: widget.Title, X: widget.X, Y: widget.Y, Width: maxPositiveFloat(widget.Width, 3), Height: maxPositiveFloat(widget.Height, 2), Config: string(config)}).Error; err != nil {
+			if current, ok := existingByID[widget.ID]; ok {
+				current.WidgetType = widget.WidgetType
+				current.Title = widget.Title
+				current.X = widget.X
+				current.Y = widget.Y
+				current.Width = maxPositiveFloat(widget.Width, 3)
+				current.Height = maxPositiveFloat(widget.Height, 2)
+				current.Config = string(config)
+				if err := tx.Save(current).Error; err != nil {
+					return err
+				}
+				keptIDs = append(keptIDs, current.ID)
+				continue
+			}
+			created := &models.DashboardWidget{DashboardID: item.ID, WidgetType: widget.WidgetType, Title: widget.Title, X: widget.X, Y: widget.Y, Width: maxPositiveFloat(widget.Width, 3), Height: maxPositiveFloat(widget.Height, 2), Config: string(config)}
+			if err := tx.Create(created).Error; err != nil {
 				return err
 			}
+			keptIDs = append(keptIDs, created.ID)
 		}
-		return nil
+		if len(keptIDs) == 0 {
+			return tx.Where("dashboard_id = ?", item.ID).Delete(&models.DashboardWidget{}).Error
+		}
+		return tx.Where("dashboard_id = ? AND id NOT IN ?", item.ID, keptIDs).Delete(&models.DashboardWidget{}).Error
 	})
 }
 func maxPositive(value, fallback int) int {
