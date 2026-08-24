@@ -965,6 +965,24 @@ func stringValue(config map[string]any, key, fallback string) string {
 }
 
 func resolveInternalOperand(value any, variables map[string]any) any {
+	if expression, ok := value.(map[string]any); ok {
+		switch expression["kind"] {
+		case "internal":
+			return variables[stringValue(expression, "name", "")]
+		case "math":
+			left, lok := internalNumber(resolveInternalOperand(expression["left"], variables))
+			right, rok := internalNumber(resolveInternalOperand(expression["right"], variables))
+			if !lok || !rok { return nil }
+			switch stringValue(expression, "operator", "+") {
+			case "+": return left + right
+			case "-": return left - right
+			case "*": return left * right
+			case "/":
+				if right != 0 { return left / right }
+			}
+			return nil
+		}
+	}
 	if name, ok := value.(string); ok {
 		trimmed := strings.TrimSpace(name)
 		if current, exists := variables[trimmed]; exists {

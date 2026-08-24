@@ -61,6 +61,8 @@ function defineFlowBlocks() {
   const definitions: Record<string, unknown> = {
     flow_start: { init(this: Blockly.Block) { this.appendDummyInput().appendField("开始"); this.setNextStatement(true); this.setColour(nodeColours.START); this.setTooltip("流程开始") } },
     flow_end: { init(this: Blockly.Block) { this.appendDummyInput().appendField("结束"); this.setPreviousStatement(true); this.setColour(nodeColours.END); this.setTooltip("流程结束") } },
+    flow_var_get: { init(this: Blockly.Block) { this.appendDummyInput().appendField("内部变量").appendField(new Blockly.FieldVariable("counter"), "VARIABLE"); this.setOutput(true); this.setColour(nodeColours.VAR_SET); this.setTooltip("读取内部变量，可插入计算或赋值输入") } },
+    flow_math: { init(this: Blockly.Block) { this.appendValueInput("LEFT").appendField("计算"); this.appendDummyInput().appendField(new Blockly.FieldDropdown([["+", "+"], ["−", "-"], ["×", "*"], ["÷", "/"]]), "OP"); this.appendValueInput("RIGHT"); this.setOutput(true); this.setColour(nodeColours.CALCULATE); this.setTooltip("可嵌套变量、数字和其他数学计算") } },
     flow_if: { init(this: Blockly.Block) {
       this.appendDummyInput().appendField("如果").appendField(new Blockly.FieldDropdown([["PLC变量", "plc"], ["内部变量", "internal"]]), "SOURCE").appendField("PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField("内部").appendField(new Blockly.FieldVariable("counter"), "INTERNAL_VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
       this.appendStatementInput("TRUE").appendField("满足")
@@ -88,9 +90,13 @@ function defineFlowBlocks() {
         this.appendStatementInput("CASE_2_BRANCH").appendField("值 2")
         this.appendStatementInput("DEFAULT_BRANCH").appendField("默认")
       } else if (type === "VAR_SET") {
-        this.appendDummyInput().appendField("内部变量").appendField(new Blockly.FieldVariable("counter"), "VARIABLE").appendField("赋值").appendField(new Blockly.FieldTextInput("0"), "VALUE")
+        this.appendDummyInput().appendField("内部变量").appendField(new Blockly.FieldVariable("counter"), "VARIABLE")
+        this.appendValueInput("VALUE").appendField("赋值")
       } else if (type === "CALCULATE") {
-        this.appendDummyInput().appendField("结果变量").appendField(new Blockly.FieldVariable("result"), "TARGET").appendField("=").appendField(new Blockly.FieldTextInput("0"), "LEFT").appendField(new Blockly.FieldDropdown([["+", "+"], ["−", "-"], ["×", "*"], ["÷", "/"]]), "OP").appendField(new Blockly.FieldTextInput("0"), "RIGHT")
+        this.appendDummyInput().appendField("结果变量").appendField(new Blockly.FieldVariable("result"), "TARGET")
+        this.appendValueInput("LEFT").appendField("=")
+        this.appendDummyInput().appendField(new Blockly.FieldDropdown([["+", "+"], ["−", "-"], ["×", "*"], ["÷", "/"]]), "OP")
+        this.appendValueInput("RIGHT")
       } else if (type === "DELAY") {
         this.appendDummyInput().appendField("延时秒数").appendField(new Blockly.FieldNumber(5, 1), "SECONDS")
       } else if (type === "LOOP") {
@@ -132,8 +138,8 @@ function toolboxDefinition() {
     contents: [
       { kind: "category", name: "流程控制", colour: String(nodeColours.START), contents: ["START", "END", "IF", "SWITCH", "LOOP", "PARALLEL"].map((type) => ({ kind: "block", type: blockTypeForNode(type) })) },
       category("PLC 操作", nodeColours.SET, ["SET", "GET", "WAIT"]),
-      category("内部变量", nodeColours.VAR_SET, ["VAR_SET"]),
-      category("数学运算", nodeColours.CALCULATE, ["CALCULATE"]),
+      { kind: "category", name: "内部变量", colour: String(nodeColours.VAR_SET), contents: [{ kind: "block", type: "flow_var_set" }, { kind: "block", type: "flow_var_get" }] },
+      { kind: "category", name: "数学运算", colour: String(nodeColours.CALCULATE), contents: [{ kind: "block", type: "flow_math" }, { kind: "block", type: "math_number" }] },
       category("流程动作", nodeColours.DELAY, ["DELAY", "MANUAL_CONFIRM", "ALARM", "SUBFLOW"]),
       { kind: "category", name: "变量管理", colour: String(nodeColours.VAR_SET), contents: [{ kind: "button", text: "创建内部变量", callbackkey: "CREATE_INTERNAL_VARIABLE" }] },
     ],
@@ -155,6 +161,27 @@ function parseFieldValue(value: string | null): unknown {
   if (text.toLowerCase() === "false") return false
   if (text !== "" && /^-?\d+(\.\d+)?$/.test(text)) return Number(text)
   return text
+}
+
+function expressionFromBlock(block?: Blockly.Block | null): unknown {
+  if (!block) return undefined
+  if (block.type === "flow_var_get") return { kind: "internal", name: block.getFieldValue("VARIABLE") }
+  if (block.type === "flow_math") {
+    return {
+      kind: "math",
+      operator: block.getFieldValue("OP") || "+",
+      left: expressionFromBlock(block.getInput("LEFT")?.connection?.targetBlock()) ?? 0,
+      right: expressionFromBlock(block.getInput("RIGHT")?.connection?.targetBlock()) ?? 0,
+    }
+  }
+  if (block.type === "math_number") return Number(block.getFieldValue("NUM") ?? 0)
+  if (block.type === "logic_boolean") return block.getFieldValue("BOOL") === "TRUE"
+  if (block.type === "text") return block.getFieldValue("TEXT") ?? ""
+  return undefined
+}
+
+function expressionFromInput(block: Blockly.Block, inputName: string, fallback: unknown) {
+  return expressionFromBlock(block.getInput(inputName)?.connection?.targetBlock()) ?? fallback
 }
 
 function configFromBlock(block: Blockly.Block, type: string) {
@@ -185,13 +212,13 @@ function configFromBlock(block: Blockly.Block, type: string) {
   }
   if (type === "VAR_SET") {
     config.variable = field("VARIABLE") ?? config.variable
-    config.value = parseFieldValue(field("VALUE"))
+    config.value = expressionFromInput(block, "VALUE", config.value)
   }
   if (type === "CALCULATE") {
     config.target = field("TARGET") ?? config.target
-    config.left = parseFieldValue(field("LEFT"))
+    config.left = expressionFromInput(block, "LEFT", config.left)
     config.operator = field("OP") ?? "+"
-    config.right = parseFieldValue(field("RIGHT"))
+    config.right = expressionFromInput(block, "RIGHT", config.right)
   }
   if (type === "DELAY") config.seconds = Number(field("SECONDS") ?? config.seconds)
   if (type === "LOOP") config.max_iterations = Number(field("MAX_ITERATIONS") ?? config.max_iterations)
@@ -214,7 +241,7 @@ function readBlockNode(block: Blockly.Block): FlowNode {
 }
 
 function documentFromWorkspace(workspace: Blockly.WorkspaceSvg): FlowDocument {
-  const blocks = workspace.getAllBlocks(false)
+  const blocks = workspace.getAllBlocks(false).filter((block) => !block.outputConnection)
   const nodes = blocks.map(readBlockNode)
   const edges: FlowDocument["edges"] = []
   for (const block of blocks) {
@@ -267,6 +294,52 @@ function hydrateBlockConfig(block: Blockly.Block, node: FlowNode) {
   set("LEVEL", config.level)
 }
 
+function hydrateExpression(workspace: Blockly.WorkspaceSvg, input: Blockly.Input | null, expression: unknown) {
+  if (!input?.connection || expression === undefined || expression === null) return
+  const create = (value: unknown): Blockly.Block | null => {
+    if (typeof value === "number") {
+      const numberBlock = workspace.newBlock("math_number")
+      numberBlock.initSvg(); numberBlock.render(); numberBlock.setFieldValue(String(value), "NUM")
+      return numberBlock
+    }
+    if (typeof value === "boolean") {
+      const booleanBlock = workspace.newBlock("logic_boolean")
+      booleanBlock.initSvg(); booleanBlock.render(); booleanBlock.setFieldValue(value ? "TRUE" : "FALSE", "BOOL")
+      return booleanBlock
+    }
+    if (typeof value === "string") {
+      const textBlock = workspace.newBlock("text")
+      textBlock.initSvg(); textBlock.render(); textBlock.setFieldValue(value, "TEXT")
+      return textBlock
+    }
+    if (!value || typeof value !== "object") return null
+    const object = value as Record<string, unknown>
+    if (object.kind === "internal") {
+      const variableBlock = workspace.newBlock("flow_var_get")
+      variableBlock.initSvg(); variableBlock.render(); variableBlock.setFieldValue(String(object.name ?? "counter"), "VARIABLE")
+      return variableBlock
+    }
+    if (object.kind === "math") {
+      const mathBlock = workspace.newBlock("flow_math")
+      mathBlock.initSvg(); mathBlock.render(); mathBlock.setFieldValue(String(object.operator ?? "+"), "OP")
+      hydrateExpression(workspace, mathBlock.getInput("LEFT"), object.left)
+      hydrateExpression(workspace, mathBlock.getInput("RIGHT"), object.right)
+      return mathBlock
+    }
+    return null
+  }
+  const child = create(expression)
+  if (child?.outputConnection) input.connection.connect(child.outputConnection)
+}
+
+function collectExpressionVariables(value: unknown, names: Set<string>) {
+  if (!value || typeof value !== "object") return
+  const object = value as Record<string, unknown>
+  if (object.kind === "internal" && typeof object.name === "string") names.add(object.name)
+  collectExpressionVariables(object.left, names)
+  collectExpressionVariables(object.right, names)
+}
+
 function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDocument) {
   workspace.clear()
   const blocks = new Map<string, Blockly.Block>()
@@ -278,6 +351,9 @@ function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDo
     for (const name of names) {
       if (typeof name === "string" && name.trim()) internalNames.add(name.trim())
     }
+    collectExpressionVariables(config.value, internalNames)
+    collectExpressionVariables(config.left, internalNames)
+    collectExpressionVariables(config.right, internalNames)
   }
   const variableMap = workspace.getVariableMap()
   for (const name of internalNames) {
@@ -288,6 +364,9 @@ function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDo
     block.data = JSON.stringify(node.config ?? {})
     hydrateBlockConfig(block, node)
     block.initSvg(); block.render(); blocks.set(node.id, block)
+    hydrateExpression(workspace, block.getInput("VALUE"), node.config?.value)
+    hydrateExpression(workspace, block.getInput("LEFT"), node.config?.left)
+    hydrateExpression(workspace, block.getInput("RIGHT"), node.config?.right)
   }
   for (const edge of document.edges) {
     const source = blocks.get(edge.source); const target = blocks.get(edge.target)
