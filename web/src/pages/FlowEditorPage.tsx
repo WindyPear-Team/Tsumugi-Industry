@@ -68,7 +68,7 @@ function defineFlowBlocks() {
       this.appendStatementInput("TRUE").appendField("满足")
       this.appendDummyInput().appendField("否则")
       this.appendStatementInput("FALSE")
-      this.setPreviousStatement(true); this.setColour(nodeColours.IF); this.setTooltip("条件分支。配置变量和比较值，并在两个分支中继续连接 Blockly 积木")
+      this.setPreviousStatement(true); this.setNextStatement(true); this.setColour(nodeColours.IF); this.setTooltip("条件分支。配置变量和比较值，并在两个分支中继续连接 Blockly 积木")
     } },
   }
   for (const type of nodeTypes.filter((item) => item !== "IF")) {
@@ -118,7 +118,7 @@ function defineFlowBlocks() {
       } else {
         this.appendDummyInput().appendField(nodeLabels[type])
       }
-      if (type === "LOOP" || type === "PARALLEL" || type === "SWITCH") this.setPreviousStatement(true)
+      if (type === "LOOP" || type === "PARALLEL" || type === "SWITCH") { this.setPreviousStatement(true); this.setNextStatement(true) }
       else { this.setPreviousStatement(true); this.setNextStatement(true) }
       this.setColour(nodeColours[type]); this.setTooltip(nodeLabels[type])
     } }
@@ -371,7 +371,9 @@ function workspaceFromDocument(workspace: Blockly.WorkspaceSvg, document: FlowDo
   for (const edge of document.edges) {
     const source = blocks.get(edge.source); const target = blocks.get(edge.target)
     if (!source || !target || !target.previousConnection) continue
-    if (source.type === "flow_if" || source.type === "flow_parallel" || source.type === "flow_loop" || source.type === "flow_switch") {
+    if ((source.type === "flow_if" || source.type === "flow_parallel" || source.type === "flow_loop" || source.type === "flow_switch") && !edge.condition && source.nextConnection && !source.nextConnection.targetBlock()) {
+      source.nextConnection.connect(target.previousConnection)
+    } else if (source.type === "flow_if" || source.type === "flow_parallel" || source.type === "flow_loop" || source.type === "flow_switch") {
       const index = ifEdgeIndex.get(source.id) ?? 0
       ifEdgeIndex.set(source.id, index + 1)
       const condition = source.type === "flow_if"
