@@ -10,12 +10,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-const nodeTypes = ["SET", "GET", "WAIT", "IF", "SWITCH", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW"] as const
+const nodeTypes = ["SET", "GET", "WAIT", "IF", "SWITCH", "VAR_SET", "CALCULATE", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW"] as const
 const nodeLabels: Record<string, string> = {
   START: "开始", END: "结束", SET: "设置变量", GET: "读取变量", WAIT: "等待条件", IF: "如果",
-  DELAY: "延时", MANUAL_CONFIRM: "人工确认", ALARM: "报警", LOOP: "循环", PARALLEL: "并行", SUBFLOW: "子流程", SWITCH: "多路分支",
+  DELAY: "延时", MANUAL_CONFIRM: "人工确认", ALARM: "报警", LOOP: "循环", PARALLEL: "并行", SUBFLOW: "子流程", SWITCH: "多路分支", VAR_SET: "内部变量赋值", CALCULATE: "数学计算",
 }
-const nodeColours: Record<string, number> = { START: 210, END: 210, SET: 5, GET: 190, WAIT: 35, IF: 195, SWITCH: 265, DELAY: 25, MANUAL_CONFIRM: 320, ALARM: 5, LOOP: 230, PARALLEL: 165, SUBFLOW: 275 }
+const nodeColours: Record<string, number> = { START: 210, END: 210, SET: 5, GET: 190, WAIT: 35, IF: 195, SWITCH: 265, VAR_SET: 125, CALCULATE: 45, DELAY: 25, MANUAL_CONFIRM: 320, ALARM: 5, LOOP: 230, PARALLEL: 165, SUBFLOW: 275 }
 let plcOptions: [string, string][] = [["请先配置 PLC", ""]]
 let variablesByPLC = new Map<string, PLCVariable[]>()
 let flowOptions: [string, string][] = [["请先配置已发布子流程", ""]]
@@ -62,7 +62,7 @@ function defineFlowBlocks() {
     flow_start: { init(this: Blockly.Block) { this.appendDummyInput().appendField("开始"); this.setNextStatement(true); this.setColour(nodeColours.START); this.setTooltip("流程开始") } },
     flow_end: { init(this: Blockly.Block) { this.appendDummyInput().appendField("结束"); this.setPreviousStatement(true); this.setColour(nodeColours.END); this.setTooltip("流程结束") } },
     flow_if: { init(this: Blockly.Block) {
-      this.appendDummyInput().appendField("如果 PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
+      this.appendDummyInput().appendField("如果").appendField(new Blockly.FieldDropdown([["PLC变量", "plc"], ["内部变量", "internal"]]), "SOURCE").appendField("PLC").appendField(new Blockly.FieldDropdown(() => plcFieldOptions()), "PLC_ID").appendField("变量").appendField(new Blockly.FieldDropdown(function(this: Blockly.FieldDropdown) { return variableFieldOptions(this) }), "VARIABLE").appendField("内部").appendField(new Blockly.FieldVariable("counter"), "INTERNAL_VARIABLE").appendField(new Blockly.FieldDropdown([["等于", "=="], ["不等于", "!="], ["大于", ">"], ["小于", "<"], ["大于等于", ">="], ["小于等于", "<="]]), "OP").appendField(new Blockly.FieldTextInput("true"), "EXPECTED")
       this.appendStatementInput("TRUE").appendField("满足")
       this.appendDummyInput().appendField("否则")
       this.appendStatementInput("FALSE")
@@ -87,6 +87,10 @@ function defineFlowBlocks() {
         this.appendStatementInput("CASE_1_BRANCH").appendField("值 1")
         this.appendStatementInput("CASE_2_BRANCH").appendField("值 2")
         this.appendStatementInput("DEFAULT_BRANCH").appendField("默认")
+      } else if (type === "VAR_SET") {
+        this.appendDummyInput().appendField("内部变量").appendField(new Blockly.FieldVariable("counter"), "VARIABLE").appendField("赋值").appendField(new Blockly.FieldTextInput("0"), "VALUE")
+      } else if (type === "CALCULATE") {
+        this.appendDummyInput().appendField("结果变量").appendField(new Blockly.FieldVariable("result"), "TARGET").appendField("=").appendField(new Blockly.FieldTextInput("0"), "LEFT").appendField(new Blockly.FieldDropdown([["+", "+"], ["−", "-"], ["×", "*"], ["÷", "/"]]), "OP").appendField(new Blockly.FieldTextInput("0"), "RIGHT")
       } else if (type === "DELAY") {
         this.appendDummyInput().appendField("延时秒数").appendField(new Blockly.FieldNumber(5, 1), "SECONDS")
       } else if (type === "LOOP") {
@@ -117,11 +121,20 @@ function defineFlowBlocks() {
 }
 
 function toolboxDefinition() {
+  const category = (name: string, colour: number, types: string[]) => ({
+    kind: "category",
+    name,
+    colour: String(colour),
+    contents: types.map((type) => ({ kind: "block", type: blockTypeForNode(type) })),
+  })
   return {
     kind: "categoryToolbox",
     contents: [
-      { kind: "category", name: "流程", colour: String(nodeColours.START), contents: [{ kind: "block", type: "flow_start" }, { kind: "block", type: "flow_end" }, { kind: "block", type: "flow_if" }] },
-      { kind: "category", name: "节点", colour: String(nodeColours.SET), contents: nodeTypes.filter((type) => type !== "IF").map((type) => ({ kind: "block", type: blockTypeForNode(type) })) },
+      { kind: "category", name: "流程控制", colour: String(nodeColours.START), contents: ["START", "END", "IF", "SWITCH", "LOOP", "PARALLEL"].map((type) => ({ kind: "block", type: blockTypeForNode(type) })) },
+      category("PLC 操作", nodeColours.SET, ["SET", "GET", "WAIT"]),
+      category("内部变量", nodeColours.VAR_SET, ["VAR_SET"]),
+      category("数学运算", nodeColours.CALCULATE, ["CALCULATE"]),
+      category("流程动作", nodeColours.DELAY, ["DELAY", "MANUAL_CONFIRM", "ALARM", "SUBFLOW"]),
     ],
   }
 }
@@ -129,6 +142,8 @@ function toolboxDefinition() {
 function configFor(type: string): Record<string, unknown> {
   if (type === "LOOP") return { max_iterations: 3 }
   if (type === "DELAY") return { seconds: 5 }
+  if (type === "VAR_SET") return { variable: "counter", value: 0 }
+  if (type === "CALCULATE") return { target: "result", left: 0, operator: "+", right: 0 }
   if (["SET", "GET", "WAIT", "IF", "SWITCH"].includes(type)) return { variable: "", operator: "==", expected: true, timeout_seconds: 10, timeout_action: "FAIL", max_retries: 0, retry_interval_seconds: 1 }
   return {}
 }
@@ -155,6 +170,10 @@ function configFromBlock(block: Blockly.Block, type: string) {
     config.operator = field("OP") ?? config.operator
     config.expected = parseFieldValue(field("EXPECTED"))
   }
+  if (type === "IF") {
+    config.source = field("SOURCE") ?? config.source ?? "plc"
+    config.internal_variable = field("INTERNAL_VARIABLE") ?? config.internal_variable
+  }
   if (type === "SET") config.value = parseFieldValue(field("VALUE"))
   if (type === "WAIT") {
     config.timeout_seconds = Number(field("TIMEOUT") ?? config.timeout_seconds)
@@ -162,6 +181,16 @@ function configFromBlock(block: Blockly.Block, type: string) {
   if (type === "SWITCH") {
     config.case_1 = parseFieldValue(field("CASE_1"))
     config.case_2 = parseFieldValue(field("CASE_2"))
+  }
+  if (type === "VAR_SET") {
+    config.variable = field("VARIABLE") ?? config.variable
+    config.value = parseFieldValue(field("VALUE"))
+  }
+  if (type === "CALCULATE") {
+    config.target = field("TARGET") ?? config.target
+    config.left = parseFieldValue(field("LEFT"))
+    config.operator = field("OP") ?? "+"
+    config.right = parseFieldValue(field("RIGHT"))
   }
   if (type === "DELAY") config.seconds = Number(field("SECONDS") ?? config.seconds)
   if (type === "LOOP") config.max_iterations = Number(field("MAX_ITERATIONS") ?? config.max_iterations)
@@ -219,8 +248,16 @@ function hydrateBlockConfig(block: Blockly.Block, node: FlowNode) {
   set("VALUE", config.value)
   set("OP", config.operator)
   set("EXPECTED", config.expected)
+  set("SOURCE", config.source)
+  set("INTERNAL_VARIABLE", config.internal_variable)
   set("CASE_1", config.case_1)
   set("CASE_2", config.case_2)
+  set("VARIABLE", config.variable)
+  set("VALUE", config.value)
+  set("TARGET", config.target)
+  set("LEFT", config.left)
+  set("OP", config.operator)
+  set("RIGHT", config.right)
   set("TIMEOUT", config.timeout_seconds)
   set("SECONDS", config.seconds)
   set("MAX_ITERATIONS", config.max_iterations)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -401,6 +402,7 @@ func (r *Router) validateFlowDocument(document flowDocument) []string {
 		case "END":
 			endCount++
 		case "SET", "GET", "WAIT", "IF", "SWITCH", "DELAY", "MANUAL_CONFIRM", "ALARM", "LOOP", "PARALLEL", "SUBFLOW":
+		case "VAR_SET", "CALCULATE":
 		default:
 			issues = append(issues, "不支持的节点类型："+node.Type)
 		}
@@ -456,6 +458,21 @@ func (r *Router) validateFlowDocument(document flowDocument) []string {
 		}
 		if strings.EqualFold(node.Type, "SUBFLOW") && strings.TrimSpace(stringValue(node.Config, "flow_code", "")) == "" {
 			issues = append(issues, "SUBFLOW 节点必须配置 flow_code："+node.ID)
+		}
+		if strings.EqualFold(node.Type, "VAR_SET") && strings.TrimSpace(stringValue(node.Config, "variable", "")) == "" {
+			issues = append(issues, "VAR_SET 节点必须配置内部变量名："+node.ID)
+		}
+		if strings.EqualFold(node.Type, "CALCULATE") {
+			if strings.TrimSpace(stringValue(node.Config, "target", "")) == "" {
+				issues = append(issues, "CALCULATE 节点必须配置结果变量："+node.ID)
+			}
+			operator := stringValue(node.Config, "operator", "")
+			if operator != "+" && operator != "-" && operator != "*" && operator != "/" {
+				issues = append(issues, "CALCULATE 节点运算符无效："+node.ID)
+			}
+		}
+		if strings.EqualFold(node.Type, "IF") && strings.EqualFold(stringValue(node.Config, "source", "plc"), "internal") && strings.TrimSpace(stringValue(node.Config, "internal_variable", "")) == "" {
+			issues = append(issues, "IF 内部变量模式必须配置内部变量："+node.ID)
 		}
 	}
 	if startCount == 1 {
@@ -525,6 +542,7 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 	}
 	current := start
 	loopCounts := map[string]int{}
+	internalVariables := map[string]any{}
 	deadline := time.Time{}
 	if definition.TimeoutSeconds > 0 {
 		deadline = time.Now().Add(time.Duration(definition.TimeoutSeconds) * time.Second)
@@ -565,7 +583,7 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 		jumpTarget := ""
 		timeoutTarget := edgeTargetByCondition(next[node.ID], "timeout", "")
 		for {
-			nodeErr = r.executeFlowNode(runID, node)
+			nodeErr = r.executeFlowNode(runID, node, internalVariables)
 			if nodeErr == nil || errors.Is(nodeErr, errFlowConditionFalse) {
 				break
 			}
@@ -681,7 +699,7 @@ func (r *Router) executeFlow(runID uint, definition models.FlowDefinition) {
 	}
 }
 
-func (r *Router) executeFlowNode(runID uint, node flowNode) error {
+func (r *Router) executeFlowNode(runID uint, node flowNode, internalVariables map[string]any) error {
 	_ = runID
 	config := node.Config
 	switch strings.ToUpper(node.Type) {
@@ -692,15 +710,28 @@ func (r *Router) executeFlowNode(runID uint, node flowNode) error {
 		return r.db.Create(&models.Alarm{Code: "FLOW_ALARM", Level: stringValue(config, "level", "warning"), Message: message, Status: "active", OccurredAt: time.Now()}).Error
 	case "GET", "IF", "SWITCH":
 		variableName, _ := config["variable"].(string)
-		if strings.TrimSpace(variableName) == "" {
-			return errors.New("节点未配置语义变量")
-		}
-		value, quality, err := r.readSemanticVariable(variableName)
-		if err != nil {
-			return err
-		}
-		if quality != "good" {
-			return fmt.Errorf("变量 %s 数据质量为 %s，不能用于流程", variableName, quality)
+		var value any
+		if strings.EqualFold(stringValue(config, "source", "plc"), "internal") && strings.EqualFold(node.Type, "IF") {
+			internalName := strings.TrimSpace(stringValue(config, "internal_variable", ""))
+			if internalName == "" {
+				return errors.New("IF 节点未配置内部变量")
+			}
+			value = internalVariables[internalName]
+			if value == nil {
+				return fmt.Errorf("内部变量 %s 尚未赋值", internalName)
+			}
+		} else {
+			if strings.TrimSpace(variableName) == "" {
+				return errors.New("节点未配置语义变量")
+			}
+			plcValue, quality, err := r.readSemanticVariable(variableName)
+			if err != nil {
+				return err
+			}
+			if quality != "good" {
+				return fmt.Errorf("变量 %s 数据质量为 %s，不能用于流程", variableName, quality)
+			}
+			value = plcValue
 		}
 		if strings.EqualFold(node.Type, "IF") {
 			operator, _ := config["operator"].(string)
@@ -717,6 +748,36 @@ func (r *Router) executeFlowNode(runID uint, node flowNode) error {
 			}
 			return &flowSwitchError{condition: condition, message: "SWITCH 分支匹配：" + condition}
 		}
+		return nil
+	case "VAR_SET":
+		name := strings.TrimSpace(stringValue(config, "variable", ""))
+		if name == "" {
+			return errors.New("内部变量赋值节点未配置变量名")
+		}
+		internalVariables[name] = resolveInternalOperand(config["value"], internalVariables)
+		return nil
+	case "CALCULATE":
+		target := strings.TrimSpace(stringValue(config, "target", ""))
+		if target == "" {
+			return errors.New("数学计算节点未配置结果变量")
+		}
+		left, lok := internalNumber(resolveInternalOperand(config["left"], internalVariables))
+		right, rok := internalNumber(resolveInternalOperand(config["right"], internalVariables))
+		if !lok || !rok {
+			return errors.New("数学计算节点的操作数必须是数字或已赋值内部变量")
+		}
+		operator := stringValue(config, "operator", "+")
+		var result float64
+		switch operator {
+		case "+": result = left + right
+		case "-": result = left - right
+		case "*": result = left * right
+		case "/":
+			if right == 0 { return errors.New("数学计算不能除以零") }
+			result = left / right
+		default: return fmt.Errorf("不支持的数学运算符：%s", operator)
+		}
+		internalVariables[target] = result
 		return nil
 	case "DELAY":
 		seconds, _ := configNumber(config, "seconds")
@@ -901,6 +962,28 @@ func stringValue(config map[string]any, key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func resolveInternalOperand(value any, variables map[string]any) any {
+	if name, ok := value.(string); ok {
+		trimmed := strings.TrimSpace(name)
+		if current, exists := variables[trimmed]; exists {
+			return current
+		}
+		if strings.HasPrefix(trimmed, "$") {
+			return variables[strings.TrimPrefix(trimmed, "$")]
+		}
+		if parsed, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return parsed
+		}
+		if strings.EqualFold(trimmed, "true") { return true }
+		if strings.EqualFold(trimmed, "false") { return false }
+	}
+	return value
+}
+
+func internalNumber(value any) (float64, bool) {
+	return flowNumber(value)
 }
 
 func edgeTargetByCondition(edges []flowEdge, condition, fallback string) string {
